@@ -4148,6 +4148,25 @@ class TrendingRecommendation implements RecommendationStrategy {
 - Thread-safe under concurrent get/put (state assumption: single JVM first).
 - Edge cases: get of missing key; put of existing key updates value + recency; capacity=1.
 
+```mermaid
+classDiagram
+    class LRUCache {
+        -int capacity
+        -HashMap map
+        -Node head
+        -Node tail
+        +get(K key) V
+        +put(K key, V value)
+    }
+    class Node {
+        -K key
+        -V value
+        -Node prev
+        -Node next
+    }
+    LRUCache --> Node
+```
+
 ### Step 3: Interaction Flows
 
 get/put -> hash map lookup -> move node to front -> evict from the tail when full.
@@ -4232,6 +4251,31 @@ class LRUCache<K, V> {
 - Decide allow/deny per user/API key in O(1) per request; configurable limit (e.g., 100 req/min).
 - Smooth traffic (token bucket) vs strict window (sliding window) - both behind one interface.
 - Edge cases: burst at window boundary; clock skew across nodes (distributed case).
+
+```mermaid
+classDiagram
+    class RateLimiter {
+        <<interface>>
+        +allow(String userId) boolean
+    }
+    class TokenBucketRateLimiter {
+        -int capacity
+        -double refillPerSec
+        +allow(String userId) boolean
+    }
+    class SlidingWindowRateLimiter {
+        -int maxRequests
+        -long windowMillis
+        +allow(String userId) boolean
+    }
+    class Bucket {
+        -AtomicInteger tokens
+        -long lastRefillNanos
+    }
+    RateLimiter <|.. TokenBucketRateLimiter
+    RateLimiter <|.. SlidingWindowRateLimiter
+    TokenBucketRateLimiter --> Bucket
+```
 
 ### Step 3: Interaction Flows
 
@@ -4333,6 +4377,36 @@ class SlidingWindowRateLimiter implements RateLimiter {
 - N players, standard board 100 cells, snakes (head>tail) and ladders (bottom<top), single six-sided die; turn-based; first to exactly 100 (or >= 100) wins.
 - Edge cases: snake head at cell with another snake? (usually not allowed - validate board); landing on ladder chains (validate or apply iteratively per rules); player at 94 rolling 6 -> bounce or stay (clarify!).
 
+```mermaid
+classDiagram
+    class Game {
+        -Board board
+        -List players
+        -Dice dice
+        -int turn
+        +playTurn() Player
+    }
+    class Board {
+        -int size
+        -Map jumps
+        +applyJump(int cell) int
+        +isWin(int cell) boolean
+    }
+    class Dice {
+        <<interface>>
+        +roll() int
+    }
+    class FairDice
+    class Player {
+        -String name
+        -int position
+    }
+    Game --> Board
+    Game --> Player
+    Game --> Dice
+    Dice <|.. FairDice
+```
+
 ### Step 3: Interaction Flows
 
 playTurn -> roll dice -> advance -> applyJump (snake or ladder) -> win check -> pass turn.
@@ -4419,6 +4493,30 @@ class Game {
 - 3x3 board, 2 players (X and O), alternate turns, win = 3 in a row/col/diag; draw when full; invalid move rejected.
 - Edge cases: move on occupied cell; play after game over; NxN generalization.
 
+```mermaid
+classDiagram
+    class Game {
+        -Board board
+        -Piece current
+        -boolean over
+        +move(int r, int c) boolean
+    }
+    class Board {
+        -Piece[][] grid
+        +place(int r, int c, Piece p) boolean
+        +hasWon(int r, int c, Piece p) boolean
+        +isFull() boolean
+    }
+    class Piece {
+        <<enumeration>>
+        X
+        O
+        EMPTY
+    }
+    Game --> Board
+    Board --> Piece
+```
+
 ### Step 3: Interaction Flows
 
 move(r,c) -> validate and place -> last-move win check -> full-board draw check -> switch turn.
@@ -4504,6 +4602,27 @@ class Game {
 ### Step 1: Clarify Requirements
 - Users add expenses in a group (or pairwise): amount + payer + splits (equal / exact / percent); show net balances; simplify debts to minimize transfers.
 - Edge cases: splits must sum to amount (validate); percent rounding (largest remainder); a user with zero net should not appear.
+
+```mermaid
+classDiagram
+    class Expense {
+        <<abstract>>
+        -User paidBy
+        -Money total
+        +shares() Map
+    }
+    class EqualExpense
+    class ExactExpense
+    class PercentExpense
+    class BalanceService {
+        +netBalances(List expenses) Map
+        +simplify(Map net) List
+    }
+    Expense <|-- EqualExpense
+    Expense <|-- ExactExpense
+    Expense <|-- PercentExpense
+    BalanceService --> Expense
+```
 
 ### Step 3: Interaction Flows
 
@@ -4608,6 +4727,27 @@ class BalanceService {
 - Cinemas have screens; screens run shows (movie + time); each show has seats; users hold seats (TTL) then pay to confirm; one seat sold exactly once.
 - Edge cases: two users hold the same seat (hold is exclusive or first-come); payment timeout releases hold; user cancels a confirmed booking (refund policy).
 
+```mermaid
+classDiagram
+    class Show {
+        -String id
+        -Map seats
+        -Map holdExpiry
+        +hold(String seatId, long ttl) Optional
+        +confirm(String seatId, String token) boolean
+        +releaseExpiredHolds() int
+    }
+    class Movie
+    class Screen
+    class Booking {
+        -String id
+        -Show show
+    }
+    Show --> Movie
+    Show --> Screen
+    Booking --> Show
+```
+
 ### Step 3: Interaction Flows
 
 hold seat (atomic claim with TTL) -> pay -> confirm. Sweeper releases expired holds back to AVAILABLE.
@@ -4699,6 +4839,33 @@ class Show {
 - Customer browses restaurant menus, places order (items + quantities), pays; restaurant accepts/rejects; delivery agent assigned; order delivered; ratings.
 - Edge cases: item unavailable after order placed (refund line item); restaurant rejects (auto-refund); no delivery agent (retry / expand radius, same as ride matching); order cancellation window.
 
+```mermaid
+classDiagram
+    class Order {
+        -OrderStatus status
+        -Customer customer
+        -Restaurant restaurant
+        -DeliveryAgent agent
+        +accept()
+        +advance()
+        +reject()
+    }
+    class Customer
+    class Restaurant
+    class DeliveryAgent
+    class OrderStatus {
+        <<enumeration>>
+        PLACED
+        ACCEPTED
+        DELIVERED
+        REJECTED
+    }
+    Order --> Customer
+    Order --> Restaurant
+    Order --> DeliveryAgent
+    Order --> OrderStatus
+```
+
 ### Step 3: Interaction Flows
 
 place order (menu-version snapshot) -> payment authorized -> restaurant accepts -> prep states -> agent matched -> delivered -> payment captured; rejection or timeout auto-releases.
@@ -4776,6 +4943,35 @@ class Order {
 - Catalog of books with multiple copies; members borrow/return; due date + fine; reserve a book that's fully checked out; librarian manages catalog.
 - Edge cases: return overdue (fine calc); reserving member gets priority when copy returns; member with unpaid fines blocked from new loans (policy).
 
+```mermaid
+classDiagram
+    class Title {
+        -String isbn
+        -String name
+    }
+    class Copy {
+        -String barcode
+        -Loan currentLoan
+    }
+    class Member {
+        -BigDecimal fineBalance
+        +canBorrow() boolean
+    }
+    class Loan {
+        -LocalDate issueDate
+        -LocalDate dueDate
+        +fine(FinePolicy policy) Money
+    }
+    class FinePolicy {
+        <<interface>>
+        +compute(LocalDate due, LocalDate returned) Money
+    }
+    Title --> Copy
+    Copy --> Loan
+    Loan --> Member
+    Loan --> FinePolicy
+```
+
 ### Step 3: Interaction Flows
 
 issue a Copy -> due date -> return -> fine from the policy -> reservation queue for the Title drained, first reserver notified.
@@ -4852,6 +5048,26 @@ class PerDayFine implements FinePolicy {
 ### Step 1: Clarify Requirements
 - longURL -> short code (6-8 chars); redirect code -> longURL fast; same longURL may map to same code (optional); codes must not be guessable if private.
 - Edge cases: collision on code generation (retry); expired/invalid code (404); custom aliases (uniqueness constraint).
+
+```mermaid
+classDiagram
+    class UrlShortener {
+        -Map byCode
+        -Map byLongUrl
+        +shorten(String longUrl) String
+        +resolve(String code) String
+    }
+    class UrlEntry {
+        -String code
+        -String longUrl
+    }
+    class Base62 {
+        <<utility>>
+        +encode(long value) String$
+    }
+    UrlShortener --> UrlEntry
+    UrlShortener --> Base62
+```
 
 ### Step 3: Interaction Flows
 
@@ -4937,6 +5153,33 @@ class UrlShortener {
 ### Step 1: Clarify Requirements
 - Traders place BUY/SELL orders (symbol, qty, price, type LIMIT/MARKET); engine matches orders by price-time priority; executed trades update positions; cancel open order.
 - Edge cases: partial fills (remaining qty stays in book); MARKET order fills against best available; two orders arriving simultaneously (single matching thread = serializable).
+
+```mermaid
+classDiagram
+    class MatchingEngine {
+        +match(Order incoming) List
+    }
+    class OrderBook {
+        -TreeMap bids
+        -TreeMap asks
+        +match(Order incoming) List
+    }
+    class Order {
+        -Side side
+        -int price
+        -int qty
+        -int remaining
+    }
+    class Trade {
+        <<record>>
+        +String buyOrderId
+        +int price
+        +int qty
+    }
+    MatchingEngine --> OrderBook
+    OrderBook --> Order
+    OrderBook --> Trade
+```
 
 ### Step 3: Interaction Flows
 
@@ -5028,6 +5271,31 @@ class OrderBook {
 ### Step 1: Clarify Requirements
 - Host creates meeting (id, password, settings); participants join/leave; roles HOST/COHOST/PARTICIPANT; mute/unmute self; host can mute anyone; screen share one at a time; meeting ends for all when host leaves (or reassign).
 - Edge cases: join after meeting locked; duplicate join same user (kick old session); capacity limit.
+
+```mermaid
+classDiagram
+    class Meeting {
+        -String id
+        -Map participants
+        -String activeSharer
+        -boolean locked
+        +join(Participant p)
+        +muteOther(String actor, String target)
+        +startShare(String userId)
+    }
+    class Participant {
+        -String userId
+        -Role role
+    }
+    class Role {
+        <<enumeration>>
+        HOST
+        COHOST
+        PARTICIPANT
+    }
+    Meeting --> Participant
+    Participant --> Role
+```
 
 ### Step 3: Interaction Flows
 
@@ -5123,6 +5391,24 @@ class Meeting {
 - get/put/delete with O(1)-ish latency; capacity per node with LRU eviction; cluster scales by adding nodes; minimal key remapping on node add/remove.
 - Edge cases: node dies mid-operation (replication or miss); hot key on one node (replication of hot keys); concurrent put same key (last-write-wins is acceptable - say it).
 
+```mermaid
+classDiagram
+    class DistributedCache {
+        +get(String key) byte[]
+        +put(String key, byte[] value)
+    }
+    class ConsistentHashRing {
+        -TreeMap ring
+        +route(String key) CacheNode
+    }
+    class CacheNode {
+        -String id
+        -LRUCache store
+    }
+    DistributedCache --> ConsistentHashRing
+    ConsistentHashRing --> CacheNode
+```
+
 ### Step 3: Interaction Flows
 
 get/put -> route the key around the consistent-hash ring -> local LRU on the owning node -> replicate to the R clockwise successors.
@@ -5206,6 +5492,30 @@ class DistributedCache {
 ### Step 1: Clarify Requirements
 - Working directory -> stage changes -> commit with message; commit history is a DAG (branches, merge); checkout any commit; diff between commits.
 - Edge cases: merge conflict detection; commit is immutable once created; detached HEAD (checkout old commit).
+
+```mermaid
+classDiagram
+    class Repository {
+        -GitObjectStore store
+        -Map branches
+        +commit(String message, Map files, List parents) String
+        +merge(Branch other)
+    }
+    class Commit {
+        -List parents
+        -String treeHash
+        -String message
+    }
+    class Tree
+    class Blob
+    class Branch {
+        -String headCommitHash
+    }
+    Repository --> GitObjectStore
+    Repository --> Branch
+    Commit --> Tree
+    Tree --> Blob
+```
 
 ### Step 3: Interaction Flows
 
@@ -5296,6 +5606,26 @@ class Repository {
 ### Step 1: Clarify Requirements
 - Exactly one instance in the JVM; lazy or eager; safe under concurrent access; serialization- and reflection-proof (bonus points).
 
+```mermaid
+classDiagram
+    class ConfigManager {
+        <<enumeration>>
+        INSTANCE
+        +get(String key) String
+    }
+    class LazySingleton {
+        -LazySingleton()
+        +getInstance()$ LazySingleton
+    }
+    class DclSingleton {
+        -volatile DclSingleton instance
+        +getInstance()$ DclSingleton
+    }
+    class EagerSingleton {
+        +getInstance()$ EagerSingleton
+    }
+```
+
 ### Step 3: Interaction Flows
 
 getInstance -> the chosen idiom returns the single instance (enum field read, holder class init, volatile DCL, or eager static).
@@ -5368,6 +5698,24 @@ Packages: `domain/` (entities and enums), `service/` (business logic and state m
 ### Step 1: Clarify Requirements
 - Fixed worker threads consuming from a queue; submit(Runnable) non-blocking up to queue capacity; beyond capacity apply rejection policy; graceful shutdown completes queued tasks; shutdownNow interrupts workers.
 - Edge cases: submit after shutdown (Reject); worker dies from a task exception (replace it); idle workers must not spin (use blocking take).
+
+```mermaid
+classDiagram
+    class SimpleThreadPool {
+        -BlockingQueue queue
+        -List workers
+        -RejectionPolicy rejection
+        +submit(Runnable task)
+        +shutdown()
+    }
+    class RejectionPolicy {
+        <<interface>>
+        +reject(Runnable task, SimpleThreadPool pool)
+    }
+    class AbortPolicy
+    SimpleThreadPool --> RejectionPolicy
+    RejectionPolicy <|.. AbortPolicy
+```
 
 ### Step 3: Interaction Flows
 
@@ -5450,6 +5798,21 @@ class RejectedExecutionException extends RuntimeException {}
 ### Step 1: Clarify Requirements
 - Bounded queue; put blocks when full; take blocks when empty; FIFO; support multiple producers and consumers.
 
+```mermaid
+classDiagram
+    class SimpleBlockingQueue {
+        -Object[] items
+        -int capacity
+        -int count
+        +put(T t)
+        +take() T
+    }
+    class Lock
+    class Condition
+    SimpleBlockingQueue --> Lock
+    SimpleBlockingQueue --> Condition
+```
+
 ### Step 3: Interaction Flows
 
 put: lock, await notFull while full, insert, signal notEmpty. take: the mirror image. Consumers and producers block instead of spinning.
@@ -5530,6 +5893,22 @@ class SimpleBlockingQueue<T> {
 ### Step 1: Clarify Requirements
 - Multiple producers generate work; multiple consumers process it; bounded buffer; consumers shouldn't poll (block when empty); producers back-pressured when full; clean shutdown.
 
+```mermaid
+classDiagram
+    class Producer {
+        +run()
+    }
+    class Consumer {
+        +run()
+    }
+    class SimpleBlockingQueue {
+        +put(String msg)
+        +take() String
+    }
+    Producer --> SimpleBlockingQueue
+    Consumer --> SimpleBlockingQueue
+```
+
 ### Step 3: Interaction Flows
 
 producers put work, consumers take it; each consumer forwards the poison pill before exiting so all of them shut down.
@@ -5603,6 +5982,22 @@ public class ProducerConsumerDemo {
 ### Step 1: Clarify Requirements
 - Start from seed URLs; fetch page, extract links, enqueue unseen ones; respect per-host politeness delay; bounded concurrency; terminate when frontier empty; dedup URLs (billions -> Bloom filter).
 - Edge cases: cycles (A->B->A); duplicate URLs differing only by fragment (#x); relative URL resolution; traps (calendar pages - depth limit).
+
+```mermaid
+classDiagram
+    class WebCrawler {
+        -BlockingQueue frontier
+        -Set visited
+        -Map lastFetchByHost
+        +crawl(List seeds, int workers)
+        +enqueue(String url)
+    }
+    class Page {
+        +String url
+        +List links
+    }
+    WebCrawler --> Page
+```
 
 ### Step 3: Interaction Flows
 
@@ -5698,6 +6093,19 @@ The rules, in the order you should recite them:
 5. If a mutable field must be returned, return a copy.
 6. Don't leak `this` from the constructor (no publishing before construction completes).
 
+```mermaid
+classDiagram
+    class Employee {
+        -final String name
+        -final Date joiningDate
+        -final List skills
+        +getName() String
+        +getJoiningDate() Date
+        +getSkills() List
+    }
+    note for Employee "final class, no setters, copies in and out"
+```
+
 ### Step 3: Interaction Flows
 
 Constructor copies mutable inputs in; getters copy them out; no code path mutates state after construction.
@@ -5754,6 +6162,20 @@ Packages: `domain/` (entities and enums), `service/` (business logic and state m
 
 ### Step 1: Clarify Requirements
 - Many readers OR one writer; readers exclude writers; writers exclude everyone; fair-ish (avoid writer starvation); support lock downgrading (write -> read), reject or document upgrading.
+
+```mermaid
+classDiagram
+    class SimpleReadWriteLock {
+        -int readers
+        -int writers
+        -int writeRequests
+        +lockRead()
+        +unlockRead()
+        +lockWrite()
+        +unlockWrite()
+        +downgrade()
+    }
+```
 
 ### Step 3: Interaction Flows
 
