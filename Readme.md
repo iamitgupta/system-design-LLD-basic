@@ -13,390 +13,402 @@
 - [Part 2](#part-2): PubSub (Design+Code), ATM (Design+Code), Hotel Management (Design+Code)
 - [Part 3](#part-3): Elevator (Design+Code), Digital Wallet (Design+Code) + Locking Mechanisms, Ride Booking (Design+Code), Music Streaming (Design+Code) + Streaming Protocols
 - Every topic opens with **Requirements (Actors / Functional / Non-Functional / Edge Cases)**; delivery script in the Universal Framework
+- [Part 4](#part-4---additional-interview-problems): 20 more problems (LRU Cache, Rate Limiter, Snake & Ladder, Tic-Tac-Toe, Splitwise, BookMyShow, Food Delivery, Library, URL Shortener, Stock Exchange, Zoom, Distributed Cache, Git, Singleton, Thread Pool, Blocking Queue, Producer-Consumer, Web Crawler, Immutable Class, Read-Write Lock)
 - [Appendices](#appendix-e--compile-notes--common-imports): E (compile notes), F (12-point self-review)
 
 ---
-# THE UNIVERSAL FRAMEWORK
+# THE INTERVIEW FRAMEWORK (9 steps - run every problem through these)
 
-## What interviewers actually grade (rubric hidden in their heads)
+The 9 steps interviewers expect, in order. Do not skip Step 1; skipping it is the most common reject.
 
-| Dimension | Weight | What "senior" looks like |
-|---|---|---|
-| Requirement clarification | 20% | You ask about scale, concurrency, persistence, failure modes BEFORE drawing |
-| Modeling | 25% | Right entities, right ownership boundaries, composition > inheritance |
-| Pattern fit | 15% | Named + justified, not forced |
-| Code quality | 20% | Encapsulation, immutability, no public setters for lifecycle fields, enums with behavior |
-| Concurrency & failure | 15% | Thread-safety unprompted; idempotency; compensation; timeouts |
-| Communication | 5% | Thinks aloud, validates with interviewer |
+## Step 1: Clarify Requirements
+- **Functional**: list flows per actor (entry / exit / admin for a parking lot; place / match / ride-end for Uber). Number them FR-1, FR-2...
+- **Non-functional**: scalability, availability (what works when payment fails), consistency (slot/seat/balance never wrong), extensibility (new vehicle type, new gateway), security (role-based admin), latency target.
+- **Edge cases**: payment failure, lost ticket, clock skew, double submit - ask the interviewer which ones matter.
+- Interview tip: confirm scope out loud before writing a single class.
 
-## Delivering the requirements in the room (60-90 seconds)
+## Step 2: Identify Core Entities
+- Nouns from requirements become classes. Write a table: Entity | Key attributes.
+- Closed sets become enums (VehicleType, SlotType, OrderStatus). Enums carry behavior when they vary.
 
-## How to deliver requirements in the room (60-90 seconds)
+## Step 3: Visual Interaction Flows
+- For each use case write the ordered step list (vehicle arrives -> slot allocated -> ticket generated -> slot occupied). Draw a sequence diagram when on a whiteboard.
 
-> "Let me state requirements so we agree on scope. **Functional:** FR-1 … FR-n. **Non-functional:** concurrency - <key invariant>; performance - <only if relevant>; money/time correctness - <only if relevant>. **Edge cases worth designing for:** <top 3>. Given a 45-minute round, I'd scope us to FR-1..FR-3 in code and treat the rest as discussion - does that work?"
+## Step 4: Class Structures and Relationships (layered)
+- Layers, top to bottom: **Client -> Controller -> Service -> Repository -> Domain**.
+- Controller: thin, takes requests, delegates to one service, returns a Result object.
+- Service: all business logic (fee calc, matching, state transitions).
+- Repository: data access behind an interface (CRUD + queries); in-memory impl for the interview, swappable for a DB.
+- Domain: entities with behavior, not dumb data bags.
+- **Adapters**: external systems (payment gateways, banks, SMS) sit behind an interface in their own package - swap Razorpay for Stripe by adding one class.
+- Dependency rule: a layer only knows the layer below it, through interfaces (DIP).
+
+## Step 5: Implement Core Use Cases
+- Map each use case to concrete calls: enterVehicle() -> SlotService.allocateSlot() -> TicketService.generateTicket() -> TicketRepository.save() -> return EntryResult. Say this mapping out loud before coding.
+
+## Step 6: OOP Principles and Design Patterns
+- Name each pattern with one line of justification (Strategy: fee rules vary per vehicle type).
+- Tie decisions to SOLID: one class one job (SRP), depend on interfaces (DIP), open for extension (OCP), role-specific interfaces (ISP).
+
+## Step 7: Handle Edge Cases
+- Table format: Edge case | Strategy. Payment failure -> retry through the gateway adapter; lost ticket -> admin override; clock skew -> centralized clock.
+
+## Step 8: Package Structure and Class Diagram
+- Show packages (controller / service / repository / domain / adapter / dto) and one class diagram per major flow.
+
+## Step 9: Code (Java)
+- Code the hardest use case end to end first (usually the money flow), then entities. Interfaces for anything external; say "standard getters elided" for boilerplate.
+
+## How your topic sections map to the 9 steps
+| Your notes | Step |
+|---|---|
+| `### Requirements` (FR / NFR / Edge cases) | 1 (edge cases also feed Step 7) |
+| `### Design` (core classes, ownership) | 2 + 4 |
+| Mermaid architecture / class / sequence diagrams | 3 + 4 + 8 |
+| `### Key design decisions` | 4 + 6 |
+| `### Requirements` edge-case bullets | 7 |
+| `### Code` (Java) | 5 + 9 |
+
+Parking Lot (sections 1-2) is rebuilt below as the reference exemplar of this structure; apply the same shape to any topic in Parts 2-4 when asked to do a full round.
 
 ---
-
-## The 7 questions to ask for ANY problem
-1. **Scale**: single JVM? single machine? distributed?
-2. **Concurrency**: how many simultaneous actors? Do they contend on shared state?
-3. **Persistence**: in-memory OK, or must survive restart?
-4. **Failure semantics**: what happens on crash mid-operation? (→ idempotency, WAL, sagas)
-5. **Ordering guarantees** needed anywhere?
-6. **Read vs write ratio**? (drives indexing/caching choices)
-7. **Extensibility axes**: what will plausibly change? (→ strategy seams)
-
-## The extensibility ladder (memorize - answers every "how would you extend?" question)
-```
-Hardcode → Enum + switch → Polymorphism (Strategy/State) → Rule/config engine → Plugin/SPI → External service
-      ↑ cheapest most flexible ↑
-Pick the LOWEST rung that satisfies known requirements; show you can climb when asked.
-```
-
----
-
 # PART 1
 
 ---
 
 ## 1. Parking Lot - Design
 
-### Requirements
+### Step 1: Clarify Requirements
 
-**Actors:** Driver (entry/exit), Parking Admin (pricing, floors), Display Board (read-only consumer).
+**Functional (confirm with interviewer)**
+- FR-1 Entry: vehicle arrives -> assign smallest-sufficient free slot by type -> generate ticket (id, plate, slot, entryTime) -> mark slot occupied.
+- FR-2 Exit: scan ticket -> compute fee (hourly per vehicle type with daily cap) -> process payment with retry -> release slot -> deactivate ticket -> return receipt.
+- FR-3 Admin: add/edit floors and slots, update pricing rules, view live status, override lost-ticket exits.
 
-**Functional Requirements**
-- FR-1: A driver with a vehicle (Bike/Car/EV) enters → system assigns the *smallest sufficient* available spot and issues a ticket (id, entry time, spot, plate).
-- FR-2: Driver exits with ticket → system computes fee (per vehicle type, hourly, daily cap), takes payment, vacates spot, returns receipt.
-- FR-3: Display board shows free count per floor per spot type, updated in real time.
-- FR-4: No valid spot → entry is rejected with "Lot Full" (never partial assignment).
-- FR-5: Admin can change rates per type and view occupancy report.
+**Non-functional**
+- Consistency first: two gates never double-book a slot (correctness over throughput).
+- Availability: entry/exit must work when the payment gateway is down (defer payment, don't block the gate).
+- Extensibility: new vehicle type or new payment gateway = new class, no edits to core flow.
+- Latency: entry decision < 100ms; fee calc pure and testable.
 
-**Non-Functional Requirements**
-- NFR-1: Concurrent entries at multiple kiosks must never double-book a spot (correctness > throughput).
-- NFR-2: Entry decision (spot assignment) < 100ms; fee computation deterministic and testable.
-- NFR-3: Money handled with exact decimal arithmetic (no float).
+**Edge cases (Step 7 owns the full table)**: payment failure, lost ticket, clock skew, vehicle type incompatible with assigned slot.
 
-**Key Edge Cases**
-- Two kiosks race for the last compact spot → one wins via atomic claim, loser retries or is rejected.
-- Exit without ticket (lost ticket) → admin flow: plate lookup, charge from entry time or max-daily.
-- Vehicle stays past daily cap → cap applies; overnight = new billing day.
-- EV in non-EV spot → allowed if type fits, but no charging; billing notes it.
-- Payment declined at exit → gate stays closed; grace timer; retry or alternate payment.
+### Step 2: Core Entities
 
----
+| Entity | Key attributes |
+|---|---|
+| Vehicle | id, licensePlate, vehicleType (enum) |
+| ParkingSlot | id, slotType (enum), occupied, floorNumber |
+| Floor | id, floorNumber, slots |
+| Ticket | id, vehicleId, slotId, entryTime, active |
+| Receipt | id, ticketId, exitTime, totalFee, paymentStatus |
+| PricingRule | vehicleType, ratePerHour, dailyCap |
+| Payment | ticketId, amount, gateway, status |
 
+### Step 3: Interaction Flows
 
-### Architecture (C4-style, container view)
-
-```mermaid
-flowchart LR
- subgraph Entry
- E1["Entry Kiosk"]
- end
- subgraph Exit
- X1["Exit Kiosk"]
- end
- subgraph Core
- PL["ParkingLot orchestrator"]
- SA["SpotAssignment Strategy"]
- FC["FeeCalculator Strategy"]
- INV["Inventory floors → spots"]
- PAY["PaymentGateway interface"]
- end
- E1 -->|park| PL
- X1 -->|exit ticket, payment| PL
- PL --> SA
- PL --> FC
- PL --> INV
- PL --> PAY
- PAY -.->|impl| CASH["Cash"]
- PAY -.->|impl| CARD["Card"]
- PAY -.->|impl| UPI["UPI"]
- PL -.->|events| BOARD["DisplayBoard Observer"]
-```
-
-### Class diagram
-
-```mermaid
-classDiagram
- class ParkingLot {
- -List~ParkingFloor~ floors
- -SpotAssignmentStrategy assignment
- -FeeStrategy feeStrategy
- +park(Vehicle) Ticket
- +exit(Ticket, PaymentStrategy) Receipt
- +availabilitySnapshot() Map
- }
- class ParkingFloor {
- -int floorNumber
- -List~ParkingSpot~ spots
- +freeSpots(SpotType) List~ParkingSpot~
- +freeCount(SpotType) long
- }
- class ParkingSpot {
- -String id
- -SpotType type
- -Vehicle parked
- +assign(Vehicle) boolean
- +vacate()
- +fits(VehicleType) boolean
- }
- class Vehicle {
- <<abstract>>
- #String licensePlate
- #VehicleType type
- }
- class Ticket {
- -String id
- -LocalDateTime entryTime
- -ParkingSpot spot
- -Vehicle vehicle
- }
- class SpotAssignmentStrategy {
- <<interface>>
- +findSpot(floors, vehicle) Optional~ParkingSpot~
- }
- class FeeStrategy {
- <<interface>>
- +compute(entry, exit, VehicleType) Money
- }
- class PaymentStrategy {
- <<interface>>
- +pay(Money) boolean
- }
- ParkingLot --> ParkingFloor
- ParkingLot --> SpotAssignmentStrategy
- ParkingLot --> FeeStrategy
- ParkingFloor --> ParkingSpot
- ParkingSpot --> Vehicle
- Ticket --> ParkingSpot
- Ticket --> Vehicle
-```
-
-### Key sequence - exit flow
+Entry: vehicle arrives -> SlotService finds smallest-sufficient free slot (atomic claim) -> TicketService generates ticket -> slot marked occupied -> EntryResult returned.
+Exit: ticket scanned -> PricingService computes fee -> PaymentService charges via gateway adapter (bounded retry) -> SlotService releases slot -> TicketService deactivates -> ReceiptService builds receipt -> ExitResult returned.
 
 ```mermaid
 sequenceDiagram
- actor Driver
- participant X as Exit Kiosk
- participant PL as ParkingLot
- participant FC as FeeStrategy
- participant GW as PaymentGateway
- participant DB as DisplayBoard
-
- Driver->>X: ticket + payment method
- X->>PL: exit(ticket, cardPayment)
- PL->>FC: compute(entry, now, CAR)
- FC-->>PL: Money(Rs.140)
- PL->>GW: authorize(Rs.140)
- alt payment approved
- GW-->>PL: true
- PL->>PL: spot.vacate() [synchronized]
- PL->>DB: notify(SPOT_FREED, floor2, COMPACT)
- PL-->>X: Receipt
- else declined
- GW-->>PL: false
- PL-->>X: PaymentRequiredException
- end
+    actor D as Driver
+    participant EC as EntryController
+    participant SS as SlotService
+    participant TS as TicketService
+    D->>EC: enterVehicle(plate, CAR)
+    EC->>SS: allocateSlot(CAR)
+    SS-->>EC: slot (atomic claim)
+    EC->>TS: generateTicket(vehicle, slot)
+    TS-->>EC: ticket
+    EC-->>D: EntryResult(success, ticketId)
 ```
 
-### Key design decisions
+### Step 4: Class Structures and Relationships (layered)
 
-1. **Spot allocation = constraint satisfaction**: assign the *smallest sufficient* spot (compact car in large spot wastes inventory). Encode `fits()` per (spot, vehicle) pair; state the rule explicitly.
-2. **Money type**: never `double` - use a value object `Money(amount, Currency)` or `BigDecimal`. Rounding mode HALF_EVEN (banker's rounding) for financial calcs.
-3. **Concurrency at the gate**: the race is two kiosks grabbing the last compact spot. Solutions, in increasing sophistication:
-   - `synchronized` per spot (fine for single JVM).
-   - DB-level: `UPDATE spots SET vehicle_id=? WHERE id=? AND vehicle_id IS NULL` → affected-rows==1 wins (optimistic, works across instances).
-   - Redis `SET spot:42:lock NX PX` (distributed).
-4. **Ticket as durable receipt**: include entryTime, spot id, vehicle plate - supports disputes and lost-ticket pricing.
-5. **Display board via Observer**: `ParkingEvent` (SPOT_TAKEN / SPOT_FREED) → board recomputes per-floor counts. Keeps the kiosk path decoupled from UI.
+Client -> Controller -> Service -> Repository -> Domain, with an `adapter` package for payment gateways.
 
-### Follow-up deep-dives
-- *Multi-site chain*: ParkingLot instances report to a central `AvailabilityService` (query aggregator); booking a reserved spot across sites = saga with hold-expiry (TTL on the hold).
-- *EV charging*: EV spot state extends to CHARGING; billing combines parking fee + kWh consumed → **CompositeFeeStrategy**.
-- *How do you find the nearest free spot in O(1)?*: per floor, per type, maintain `PriorityQueue`/`TreeSet` of free spot ids; re-heap on events.
+```mermaid
+flowchart LR
+    subgraph Controller
+        EC["EntryController"]
+        XC["ExitController"]
+        AC["AdminController"]
+    end
+    subgraph Service
+        TS["TicketService"]
+        SS["SlotService"]
+        PS["PricingService"]
+        PAYS["PaymentService"]
+        RS["ReceiptService"]
+        ADS["AdminService"]
+    end
+    subgraph Repository
+        TR["TicketRepository"]
+        SR["SlotRepository"]
+        PR["PricingRuleRepository"]
+        PAYR["PaymentRepository"]
+    end
+    subgraph Domain
+        V["Vehicle"]
+        SL["ParkingSlot"]
+        F["Floor"]
+        T["Ticket"]
+        R["Receipt"]
+        PRU["PricingRule"]
+        PAY["Payment"]
+    end
+    subgraph Adapter
+        GA["PaymentGatewayAdapter"]
+        RZ["RazorpayAdapter"]
+        ST["StripeAdapter"]
+    end
+    EC --> TS
+    EC --> SS
+    XC --> TS
+    XC --> SS
+    XC --> PS
+    XC --> PAYS
+    XC --> RS
+    AC --> ADS
+    TS --> TR
+    SS --> SR
+    PS --> PR
+    PAYS --> PAYR
+    PAYS --> GA
+    GA -.-> RZ
+    GA -.-> ST
+```
+
+**Key design decisions** (Steps 4 + 6):
+1. **Strategy for pricing**: `PricingStrategy` per vehicle type (hourly-with-cap, flat). PricingService delegates; new rule = new class (OCP).
+2. **Adapter for payment**: `PaymentGatewayAdapter` interface; Razorpay/Stripe plug in without touching PaymentService (DIP + OCP).
+3. **Repository interfaces**: services never see a Map - swapping in a DB changes zero service code (DIP, Repository pattern).
+4. **Atomic slot claim** lives in SlotService, the one place a slot flips free->occupied (SRP - the race has exactly one owner).
+5. **Result DTOs**: EntryResult/ExitResult keep controllers honest about what the client gets back.
+
+### Step 5: Core Use Cases (call mapping)
+
+- enterVehicle(): EntryController -> SlotService.allocateSlot() -> TicketService.generateTicket() -> TicketRepository.save() -> return EntryResult.
+- exitVehicle(): ExitController -> TicketService.getTicket() -> PricingService.calculateFee() -> PaymentService.processPaymentWithRetry() -> SlotService.releaseSlot() -> TicketService.deactivate() -> return ExitResult.
+- admin: addFloor/addSlot/updatePricingRule -> AdminService -> respective repositories.
+
+### Step 6: Patterns and SOLID
+
+| Decision | Pattern | SOLID |
+|---|---|---|
+| Fee rules vary per type | Strategy | OCP |
+| Payment gateways swappable | Adapter | DIP, OCP |
+| Data access hidden behind interfaces | Repository | DIP |
+| Slot claim in one place | - | SRP |
+| Gateway interface kept role-only | - | ISP |
+
+### Step 7: Edge Cases
+
+| Edge case | Strategy |
+|---|---|
+| Payment failure | Bounded retry (3 tries + backoff) through the adapter; on final failure, route to admin override lane and mark payment PENDING - availability beats blocking the gate |
+| Lost ticket | Admin override: find active ticket by plate, charge from entry time or daily max |
+| Clock skew | Inject a Clock; one time source for entry/exit timestamps |
+| Slot state mismatch | Reconciliation job: sweep occupied slots with no active ticket |
+| Double entry (same plate) | Reject: one active ticket per plate |
+
+### Step 8: Package Structure
+
+```
+com.parkinglot
+  controller/  EntryController, ExitController, AdminController
+  service/     TicketService, SlotService, PricingService, PaymentService, ReceiptService, AdminService
+  repository/  TicketRepository, SlotRepository, PricingRuleRepository, PaymentRepository (+ in-memory impls)
+  domain/      Vehicle, ParkingSlot, Floor, Ticket, Receipt, PricingRule, Payment + enums
+  adapter/     PaymentGatewayAdapter, RazorpayAdapter, StripeAdapter
+  dto/         EntryResult, ExitResult
+```
 
 ---
 
 ## 2. Parking Lot - Code
 
 ```java
-enum SpotType { BIKE, COMPACT, LARGE, EV }
+// ============================ domain ============================
 enum VehicleType { BIKE, CAR, EV, TRUCK }
+enum SlotType { BIKE, COMPACT, LARGE, EV }
+enum PaymentStatus { PENDING, SUCCESS, FAILED }
 
-// ---------- Money value object (non-negotiable in interviews) ----------
-record Money(BigDecimal amount, Currency currency) {
-    Money {
-        Objects.requireNonNull(amount);
-        if (amount.signum() < 0) throw new IllegalArgumentException("negative");
-    }
-    static Money of(double amt, String ccy) { return new Money(BigDecimal.valueOf(amt), Currency.getInstance(ccy)); }
-    Money plus(Money o) { assertSameCcy(o); return new Money(amount.add(o.amount()), currency); }
-    Money times(long n) { return new Money(amount.multiply(BigDecimal.valueOf(n)), currency); }
-    private void assertSameCcy(Money o){ if (!currency.equals(o.currency())) throw new IllegalArgumentException(); }
+class Vehicle {
+    private final String licensePlate; private final VehicleType type;
+    Vehicle(String p, VehicleType t) { licensePlate = p; type = t; }
+    public VehicleType getType() { return type; }
 }
 
-// ---------- Vehicle ----------
-abstract class Vehicle {
-    protected final String licensePlate;
-    protected final VehicleType type;
-    protected Vehicle(String plate, VehicleType t){ licensePlate = plate; type = t; }
-    public VehicleType getType(){ return type; }
-}
-final class Car extends Vehicle { Car(String p){ super(p, VehicleType.CAR); } }
-final class Bike extends Vehicle { Bike(String p){ super(p, VehicleType.BIKE); } }
-final class EV extends Vehicle { EV(String p){ super(p, VehicleType.EV); } }
-
-class VehicleFactory {
-    static Vehicle create(String plate, VehicleType type) {
-        return switch (type) {
-            case CAR -> new Car(plate);
-            case BIKE -> new Bike(plate);
-            case EV -> new EV(plate);
-            case TRUCK -> throw new UnsupportedOperationException("No trucks in this lot");
-        };
-    }
-}
-
-// ---------- Spot with optimistic reservation ----------
-class ParkingSpot {
-    private final String id;
-    private final SpotType type;
-    private volatile Vehicle parked; // null = free
-
-    public boolean assign(Vehicle v) { // CAS-style reservation
-        if (!fits(v.getType())) return false;
-        return parked == null && PARKED.compareAndSet(this, null, v);
-    }
-    public void vacate(){ PARKED.set(this, null); }
-    public boolean isFree(){ return parked == null; }
-
+class ParkingSlot {
+    private final String id; private final SlotType type; private final int floorNumber;
+    private volatile boolean occupied;
+    ParkingSlot(String id, SlotType t, int floor) { this.id = id; type = t; floorNumber = floor; }
+    public boolean claim() { return !occupied && OCCUPIED.compareAndSet(this, false, true); }
+    public void release() { OCCUPIED.set(this, false); }
     public boolean fits(VehicleType vt) {
         return switch (vt) {
-            case BIKE -> true; // bike fits anywhere
-            case CAR -> type == SpotType.COMPACT || type == SpotType.LARGE;
-            case EV -> type == SpotType.EV || type == SpotType.LARGE; // EV in large OK, no charge
-            case TRUCK-> type == SpotType.LARGE;
+            case BIKE -> true;
+            case CAR  -> type == SlotType.COMPACT || type == SlotType.LARGE;
+            case EV   -> type == SlotType.EV || type == SlotType.LARGE;
+            case TRUCK-> type == SlotType.LARGE;
         };
     }
-    private static final AtomicReferenceFieldUpdater<ParkingSpot, Vehicle> PARKED =
-        AtomicReferenceFieldUpdater.newUpdater(ParkingSpot.class, Vehicle.class, "parked");
+    private static final AtomicReferenceFieldUpdater<ParkingSlot, Boolean> OCCUPIED =
+        AtomicReferenceFieldUpdater.newUpdater(ParkingSlot.class, Boolean.class, "occupied");
 }
 
-// ---------- Strategies ----------
-interface SpotAssignmentStrategy {
-    Optional<ParkingSpot> findSpot(List<ParkingFloor> floors, Vehicle v);
+class Ticket {
+    private final UUID id; private final String plate; private final String slotId;
+    private final Instant entryTime; private boolean active = true;
+    Ticket(String plate, String slotId) { id = UUID.randomUUID(); this.plate = plate; this.slotId = slotId; entryTime = Instant.now(); }
+    public UUID getId() { return id; }
+    public boolean isActive() { return active; }
+    public void deactivate() { active = false; }
+    public Instant getEntryTime() { return entryTime; }
+    public String getSlotId() { return slotId; }
 }
-class NearestAvailableStrategy implements SpotAssignmentStrategy {
-    public Optional<ParkingSpot> findSpot(List<ParkingFloor> floors, Vehicle v) {
-        return floors.stream() // floors ordered by proximity to gate
-            .flatMap(f -> f.freeSpots().stream())
-            .filter(s -> s.fits(v.getType()))
-            .min(Comparator.comparing(s -> s.getType().ordinal())); // smallest sufficient spot
+
+class PricingRule {
+    private final VehicleType type; private final double ratePerHour; private final double dailyCap;
+    PricingRule(VehicleType t, double hourly, double cap) { type = t; ratePerHour = hourly; dailyCap = cap; }
+    public VehicleType getType() { return type; }
+    public double perHour() { return ratePerHour; }
+    public double cap() { return dailyCap; }
+}
+
+// ============================ repository ============================
+interface TicketRepository {
+    Ticket save(Ticket t); Optional<Ticket> findById(UUID id); List<Ticket> findActiveByPlate(String plate);
+}
+interface SlotRepository {
+    ParkingSlot save(ParkingSlot s); List<ParkingSlot> findAll(); Optional<ParkingSlot> findById(String id);
+}
+interface PricingRuleRepository { Optional<PricingRule> findByVehicleType(VehicleType t); PricingRule save(PricingRule r); }
+
+class InMemoryTicketRepository implements TicketRepository {
+    private final Map<UUID, Ticket> store = new ConcurrentHashMap<>();
+    public Ticket save(Ticket t) { store.put(t.getId(), t); return t; }
+    public Optional<Ticket> findById(UUID id) { return Optional.ofNullable(store.get(id)); }
+    public List<Ticket> findActiveByPlate(String plate) {
+        return store.values().stream().filter(t -> t.isActive()).toList();
+    }
+}
+class InMemorySlotRepository implements SlotRepository {
+    private final Map<String, ParkingSlot> slots = new ConcurrentHashMap<>();
+    public ParkingSlot save(ParkingSlot s) { slots.put(s.toString(), s); return s; }
+    public List<ParkingSlot> findAll() { return List.copyOf(slots.values()); }
+    public Optional<ParkingSlot> findById(String id) { return Optional.ofNullable(slots.get(id)); }
+}
+class InMemoryPricingRuleRepository implements PricingRuleRepository {
+    private final Map<VehicleType, PricingRule> rules = new ConcurrentHashMap<>();
+    public Optional<PricingRule> findByVehicleType(VehicleType t) { return Optional.ofNullable(rules.get(t)); }
+    public PricingRule save(PricingRule r) { rules.put(r.getType(), r); return r; }
+}
+
+// ============================ adapter ============================
+interface PaymentGatewayAdapter { boolean charge(UUID ticketId, double amount); }
+class RazorpayAdapter implements PaymentGatewayAdapter {
+    public boolean charge(UUID ticketId, double amount) { return true; }
+}
+class StripeAdapter implements PaymentGatewayAdapter {
+    public boolean charge(UUID ticketId, double amount) { return true; }
+}
+
+// ============================ service ============================
+class SlotService {
+    private final SlotRepository slotRepository;
+    SlotService(SlotRepository r) { slotRepository = r; }
+
+    /** Smallest-sufficient free slot, claimed atomically. The race has ONE owner: here. */
+    public Optional<ParkingSlot> allocateSlot(VehicleType type) {
+        return slotRepository.findAll().stream()
+            .filter(s -> s.fits(type))
+            .sorted(Comparator.comparing(s -> s.fits(type)))
+            .filter(ParkingSlot::claim)
+            .findFirst();
+    }
+    public void releaseSlot(String slotId) {
+        slotRepository.findById(slotId).ifPresent(ParkingSlot::release);
     }
 }
 
-interface FeeStrategy {
-    Money compute(Instant entry, Instant exit, VehicleType type);
-}
-class HourlyFeeWithCap implements FeeStrategy {
-    private static final Map<VehicleType, Money> RATES = Map.of(
-        VehicleType.BIKE, Money.of(10, "INR"),
-        VehicleType.CAR, Money.of(40, "INR"),
-        VehicleType.EV, Money.of(30, "INR"));
-    private static final Money DAILY_CAP = Money.of(200, "INR");
-    private static final Money MINIMUM = Money.of(20, "INR");
-
-    public Money compute(Instant entry, Instant exit, VehicleType type) {
-        long minutes = Duration.between(entry, exit).toMinutes();
-        long billableHours = Math.max(1, (minutes + 59) / 60); // ceil
-        Money raw = RATES.get(type).times(billableHours);
-        Money weekend = isWeekend(exit) ? raw.times(1).plus(Money.of(10,"INR")) : raw; // placeholder surcharge
-        Money uncapped = raw.amount().compareTo(MINIMUM.amount()) < 0 ? MINIMUM : weekend;
-        return uncapped.amount().compareTo(DAILY_CAP.amount()) > 0 ? DAILY_CAP : uncapped;
+class TicketService {
+    private final TicketRepository ticketRepository;
+    TicketService(TicketRepository r) { ticketRepository = r; }
+    public Ticket generateTicket(String plate, ParkingSlot slot) {
+        return ticketRepository.save(new Ticket(plate, slot.toString()));
     }
-    private boolean isWeekend(Instant i){
-        return LocalDate.ofInstant(i, ZoneOffset.UTC).getDayOfWeek().getValue() >= 6;
+    public Ticket getTicket(UUID id) { return ticketRepository.findById(id).orElseThrow(); }
+    public void deactivate(UUID id) { ticketRepository.findById(id).ifPresent(Ticket::deactivate); }
+}
+
+class PricingService {
+    private final PricingRuleRepository ruleRepository;
+    PricingService(PricingRuleRepository r) { ruleRepository = r; }
+
+    public double calculateFee(Ticket ticket, VehicleType type, Instant now) {
+        PricingRule rule = ruleRepository.findByVehicleType(type).orElseThrow();
+        long hours = Math.max(1, Duration.between(ticket.getEntryTime(), now).toHours());
+        return Math.min(hours * rule.perHour(), rule.cap());
     }
 }
 
-interface PaymentStrategy { boolean authorize(Money amount); }
-class CardPayment implements PaymentStrategy {
-    public boolean authorize(Money amount) { /* PSP call, tokenized card */ return true; }
+class PaymentService {
+    private final PaymentGatewayAdapter gateway;
+    PaymentService(PaymentGatewayAdapter g) { gateway = g; }
+
+    public boolean processPaymentWithRetry(UUID ticketId, double amount, int maxRetries) {
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            if (gateway.charge(ticketId, amount)) return true;
+            sleepBackoff(attempt);
+        }
+        return false;
+    }
+    private void sleepBackoff(int attempt) { try { Thread.sleep(100L * attempt); } catch (InterruptedException ignored) {} }
 }
 
-// ---------- Events & observer ----------
-record ParkingEvent(String spotId, int floor, SpotType type, EventType kind) {}
-enum EventType { SPOT_TAKEN, SPOT_FREED }
-interface ParkingEventListener { void onEvent(ParkingEvent e); }
+// ============================ dto ============================
+record EntryResult(boolean success, UUID ticketId, String message) {}
+record ExitResult(boolean success, UUID ticketId, double fee, String message) {}
 
-class DisplayBoard implements ParkingEventListener {
-    private final Map<String, AtomicLong> counts = new ConcurrentHashMap<>();
-    public void onEvent(ParkingEvent e) {
-        String key = e.floor() + ":" + e.type();
-        counts.computeIfAbsent(key, k -> new AtomicLong())
-              .addAndGet(e.kind() == EventType.SPOT_TAKEN ? -1 : +1);
+// ============================ controller ============================
+class EntryController {
+    private final TicketService ticketService; private final SlotService slotService;
+    EntryController(TicketService ts, SlotService ss) { ticketService = ts; slotService = ss; }
+
+    public EntryResult enterVehicle(String licensePlate, VehicleType type) {
+        Optional<ParkingSlot> slot = slotService.allocateSlot(type);
+        if (slot.isEmpty()) return new EntryResult(false, null, "Lot full for " + type);
+        Ticket ticket = ticketService.generateTicket(licensePlate, slot.get());
+        return new EntryResult(true, ticket.getId(), "Proceed to " + slot);
     }
 }
 
-// ---------- Floor, Ticket, Receipt ----------
-class ParkingFloor {
-    private final int number;
-    private final List<ParkingSpot> spots;
-    ParkingFloor(int n, List<ParkingSpot> s){ number = n; spots = s; }
-    int getNumber(){ return number; }
-    Stream<ParkingSpot> freeSpots(){ return spots.stream().filter(ParkingSpot::isFree); }
-    boolean contains(ParkingSpot s){ return spots.contains(s); }
+class ExitController {
+    private final TicketService ticketService; private final SlotService slotService;
+    private final PricingService pricingService; private final PaymentService paymentService;
+    ExitController(TicketService ts, SlotService ss, PricingService ps, PaymentService pays) {
+        ticketService = ts; slotService = ss; pricingService = ps; paymentService = pays;
+    }
+
+    public ExitResult exitVehicle(UUID ticketId) {
+        Ticket ticket = ticketService.getTicket(ticketId);
+        if (!ticket.isActive()) return new ExitResult(false, ticketId, 0, "Ticket already used");
+        double fee = pricingService.calculateFee(ticket, VehicleType.CAR, Instant.now());
+        if (!paymentService.processPaymentWithRetry(ticketId, fee, 3))
+            return new ExitResult(false, ticketId, fee, "Payment failed - use admin override lane");
+        slotService.releaseSlot(ticket.getSlotId());
+        ticketService.deactivate(ticketId);
+        return new ExitResult(true, ticketId, fee, "Paid, gate open");
+    }
 }
-
-record Ticket(String id, Vehicle vehicle, ParkingSpot spot, Instant entryTime) {}
-record Receipt(String ticketId, Money fee, Instant exitTime) {}
-
-// ---------- Orchestrator ----------
-class ParkingLot {
-    private final List<ParkingFloor> floors; // immutable after construction
-    private final SpotAssignmentStrategy assignment;
-    private final FeeStrategy feeStrategy;
-    private final List<ParkingEventListener> listeners = new CopyOnWriteArrayList<>();
-    private final Map<String, Ticket> activeTickets = new ConcurrentHashMap<>();
-
-    ParkingLot(List<ParkingFloor> floors, SpotAssignmentStrategy a, FeeStrategy f){
-        this.floors = List.copyOf(floors); this.assignment = a; this.feeStrategy = f;
-    }
-
-    public Ticket park(Vehicle v) {
-        ParkingSpot spot = assignment.findSpot(floors, v)
-            .filter(s -> s.assign(v)) // re-check under CAS
-            .orElseThrow(() -> new LotFullException(v.getType()));
-        Ticket t = new Ticket(UUID.randomUUID().toString(), v, spot, Instant.now());
-        activeTickets.put(t.id(), t);
-        emit(new ParkingEvent(spot.getId(), floorOf(spot), spot.getType(), EventType.SPOT_TAKEN));
-        return t;
-    }
-
-    public Receipt exit(Ticket t, PaymentStrategy payment) {
-        Instant now = Instant.now();
-        Money fee = feeStrategy.compute(t.entryTime(), now, t.vehicle().getType());
-        if (!payment.authorize(fee)) throw new PaymentDeclinedException(fee);
-        t.spot().vacate();
-        activeTickets.remove(t.id());
-        emit(new ParkingEvent(t.spot().getId(), floorOf(t.spot()), t.spot().getType(), EventType.SPOT_FREED));
-        return new Receipt(t.id(), fee, now);
-    }
-
-    void addListener(ParkingEventListener l){ listeners.add(l); }
-    private void emit(ParkingEvent e){ listeners.forEach(l -> l.onEvent(e)); }
-    private int floorOf(ParkingSpot s){ return floors.stream().filter(f -> f.contains(s)).findFirst().orElseThrow().getNumber(); }
-}
-class LotFullException extends RuntimeException { LotFullException(Object t){ super("No spot for " + t); } }
-class PaymentDeclinedException extends RuntimeException { PaymentDeclinedException(Money m){ super("Declined: " + m); } }
 ```
 
-**Key talking points**: `AtomicReferenceFieldUpdater` gives lock-free spot claiming (no synchronized on hot path); fee strategy is pure function → trivially testable; `Money` value object kills an entire class of bugs; events decouple the board without polling.
+**Key talking points**: controllers are ~10 lines each because every decision lives in a service (SRP); payment failure returns a business result, not an exception - the gate flow stays available; repositories are interfaces so the file runs in-memory today and against a database tomorrow with zero service changes.
 
 ---
-
 ## 3. Logging Framework - Design
 
 ### Requirements
@@ -3522,6 +3534,1317 @@ class TrendingRecommendation implements RecommendationStrategy {
 ```
 
 **Talking points**: player never holds audio bytes - it holds cursors (position, positionMs) and returns segment references; ABR switching is a pure function of throughput + buffer health; shuffle permutes the *index list* so the original queue stays intact (and repeat semantics stay sane); play events carry client-generated `playId` for idempotent counting.
+
+---
+
+---
+
+# PART 4 - Additional Interview Problems
+
+---
+
+## 27. LRU Cache
+
+### Requirements
+- get(key) and put(key, value) in O(1); fixed capacity; on eviction remove least-recently-used.
+- Thread-safe under concurrent get/put (state assumption: single JVM first).
+- Edge cases: get of missing key; put of existing key updates value + recency; capacity=1.
+
+### Design
+
+Core classes: `LRUCache` (orchestrator, owns eviction + lookup), `Node` (doubly-linked entry: key, value, prev, next), `HashMap<K, Node>` (the index that makes lookup O(1)). Cache holds sentinels head/tail so insert/evict never hit null. Eviction policy is hardcoded here; if a second policy (LFU, TTL) appears, extract `EvictionPolicy<K>` and pass it in - until then, YAGNI.
+
+### Key design decisions
+1. **HashMap + doubly-linked list**: map gives O(1) lookup; list maintains usage order; sentinel head/tail nodes remove null-check corner cases.
+2. Every `get` is a write to the recency structure (move-to-front) - so even reads need mutation; a single `synchronized` on the cache is the simple correct answer; then discuss lock striping (ConcurrentHashMap of stripes) for scale.
+3. Follow-ups to volunteer: LFU (freq map + recency within freq), TTL expiry (lazy on access + sweeper), size-based eviction (weighted).
+
+### Code
+
+```java
+class LRUCache<K, V> {
+    private final int capacity;
+    private final HashMap<K, Node<K, V>> map = new HashMap<>();
+    private final Node<K, V> head = new Node<>(null, null);   // sentinels
+    private final Node<K, V> tail = new Node<>(null, null);
+
+    public LRUCache(int capacity) {
+        this.capacity = capacity;
+        head.next = tail; tail.prev = head;
+    }
+
+    public synchronized V get(K key) {
+        Node<K, V> n = map.get(key);
+        if (n == null) return null;
+        detach(n); addFront(n);          // touch = move to MRU
+        return n.value;
+    }
+
+    public synchronized void put(K key, V value) {
+        Node<K, V> n = map.get(key);
+        if (n != null) {                 // update existing
+            n.value = value; detach(n); addFront(n); return;
+        }
+        if (map.size() == capacity) {    // evict LRU (just before tail)
+            Node<K, V> lru = tail.prev;
+            detach(lru); map.remove(lru.key);
+        }
+        n = new Node<>(key, value); addFront(n); map.put(key, n);
+    }
+
+    private void detach(Node<K, V> n)  { n.prev.next = n.next; n.next.prev = n.prev; }
+    private void addFront(Node<K, V> n) {
+        n.next = head.next; n.prev = head;
+        head.next.prev = n; head.next = n;
+    }
+
+    private static final class Node<K, V> {
+        final K key; V value; Node<K, V> prev, next;
+        Node(K k, V v) { key = k; value = v; }
+    }
+}
+```
+
+**Key talking points**: sentinels kill the empty-list edge cases; eviction and insert in one pass; if asked to scale, shard by key hash into N striped LRU caches (each with its own lock) - loses global LRU strictness, say that trade-off.
+
+---
+
+## 28. Rate Limiter
+
+### Requirements
+- Decide allow/deny per user/API key in O(1) per request; configurable limit (e.g., 100 req/min).
+- Smooth traffic (token bucket) vs strict window (sliding window) - both behind one interface.
+- Edge cases: burst at window boundary; clock skew across nodes (distributed case).
+
+### Design
+
+Core classes: `RateLimiter` (interface - the only thing callers see), `TokenBucketRateLimiter` / `SlidingWindowRateLimiter` (strategies), `Bucket` (per-user mutable state: tokens + lastRefill). A `Map<userId, Bucket>` lives inside each strategy; no shared state between strategies. The strategy choice is per-endpoint config, decided at startup and injected.
+
+### Key design decisions
+1. **Strategy interface**: token bucket (smooth, memory O(1)), sliding window log (exact, memory O(window)), sliding window counter (approximate, O(1)). Pick per endpoint.
+2. Lazy refill: don't run a timer per user - compute tokens-on-arrival from elapsed time.
+3. Distributed version: Redis + Lua script (atomic refill-check-decrement), because read-then-write races across instances.
+
+### Code
+
+```java
+interface RateLimiter { boolean allow(String userId); }
+
+// ---------- Token bucket: smooth, O(1) memory ----------
+class TokenBucketRateLimiter implements RateLimiter {
+    private final int capacity;
+    private final double refillPerSec;
+    private final Map<String, Bucket> buckets = new ConcurrentHashMap<>();
+
+    private static final class Bucket {
+        final AtomicInteger tokens; volatile long lastRefillNanos;
+        Bucket(int t, long now) { tokens = new AtomicInteger(t); lastRefillNanos = now; }
+    }
+
+    TokenBucketRateLimiter(int capacity, double refillPerSec) {
+        this.capacity = capacity; this.refillPerSec = refillPerSec;
+    }
+
+    public boolean allow(String userId) {
+        long now = System.nanoTime();
+        Bucket b = buckets.computeIfAbsent(userId, k -> new Bucket(capacity, now));
+        refill(b, now);
+        while (true) {
+            int t = b.tokens.get();
+            if (t == 0) return false;
+            if (b.tokens.compareAndSet(t, t - 1)) return true;
+        }
+    }
+
+    private void refill(Bucket b, long now) {
+        long elapsed = now - b.lastRefillNanos;
+        int earned = (int) (elapsed / 1_000_000_000.0 * refillPerSec);
+        if (earned > 0) {
+            b.lastRefillNanos = now;
+            b.tokens.updateAndGet(cur -> Math.min(capacity, cur + earned));
+        }
+    }
+}
+
+// ---------- Sliding window log: exact, memory = window size ----------
+class SlidingWindowRateLimiter implements RateLimiter {
+    private final int maxRequests; private final long windowMillis;
+    private final Map<String, Deque<Long>> hits = new ConcurrentHashMap<>();
+
+    SlidingWindowRateLimiter(int max, long windowMillis) {
+        this.maxRequests = max; this.windowMillis = windowMillis;
+    }
+
+    public boolean allow(String userId) {
+        long now = System.currentTimeMillis();
+        Deque<Long> q = hits.computeIfAbsent(userId, k -> new ArrayDeque<>());
+        synchronized (q) {
+            while (!q.isEmpty() && now - q.peekFirst() > windowMillis) q.pollFirst();
+            if (q.size() >= maxRequests) return false;
+            q.addLast(now); return true;
+        }
+    }
+}
+```
+
+**Key talking points**: lazy refill means zero background threads; sliding window log is exact but memory-hungry (use approximations at scale); Redis+Lua for multi-instance because check-and-decrement must be atomic.
+
+---
+
+## 29. Snake & Ladder
+
+### Requirements
+- N players, standard board 100 cells, snakes (head>tail) and ladders (bottom<top), single six-sided die; turn-based; first to exactly 100 (or >= 100) wins.
+- Edge cases: snake head at cell with another snake? (usually not allowed - validate board); landing on ladder chains (validate or apply iteratively per rules); player at 94 rolling 6 -> bounce or stay (clarify!).
+
+### Design
+
+Core classes: `Game` (orchestrates turns, owns win state), `Board` (jump map from->to for snakes and ladders, win check), `Player` (name + position), `Dice` (interface so the dice is swappable). Game -> Board, Game -> * Player, Game -> Dice. Everything except the turn loop is immutable-friendly - Board can be shared across games.
+
+### Key design decisions
+1. **Dice as Strategy** (normal/crooked loaded die) - classic interview hook.
+2. Board holds jump map (cell -> destination) for O(1) lookup; normal cells map to themselves.
+3. `Game.move()` handles one full turn: roll -> compute -> apply jump once -> check win; game loop in service.
+
+### Code
+
+```java
+interface Dice { int roll(); }
+class FairDice implements Dice {
+    private final Random r = new Random();
+    public int roll() { return 1 + r.nextInt(6); }
+}
+
+class Board {
+    private final int size;                       // 100
+    private final Map<Integer, Integer> jumps = new HashMap<>();  // from -> to (snake or ladder)
+    Board(int size, Map<Integer, Integer> snakesAndLadders) {
+        this.size = size; jumps.putAll(snakesAndLadders);
+    }
+    int applyJump(int cell) { return jumps.getOrDefault(cell, cell); }
+    boolean isWin(int cell) { return cell == size; }
+}
+
+class Player {
+    final String name; int position = 0;
+    Player(String n) { name = n; }
+}
+
+class Game {
+    private final Board board; private final List<Player> players;
+    private final Dice dice; private int turn = 0;
+    private Player winner = null;
+
+    Game(Board b, List<Player> p, Dice d) { board = b; players = p; dice = d; }
+
+    /** Plays one full turn; returns the player who moved (or null if game over). */
+    public synchronized Player playTurn() {
+        if (winner != null) return null;
+        Player cur = players.get(turn);
+        int roll = dice.roll();
+        int next = Math.min(cur.position + roll, board.size());  // standard: stop at 100
+        next = board.applyJump(next);                            // snake or ladder, applied once
+        cur.position = next;
+        if (board.isWin(next)) { winner = cur; return null; }
+        turn = (turn + 1) % players.size();
+        return cur;
+    }
+
+    public Player winner() { return winner; }
+}
+```
+
+**Key talking points**: jump map keeps the engine dumb; exact-100 vs overshoot-bounce is a requirements question - ask it; extend: multiple dice, crooked dice (returns user-chosen value, used in test).
+
+---
+
+## 30. Tic-Tac-Toe
+
+### Requirements
+- 3x3 board, 2 players (X and O), alternate turns, win = 3 in a row/col/diag; draw when full; invalid move rejected.
+- Edge cases: move on occupied cell; play after game over; NxN generalization.
+
+### Design
+
+Core classes: `Game` (turn order, game-over flag), `Board` (grid + last-move win check), `Piece` (enum: X, O, EMPTY - no nulls on the grid). Game -> Board. The win check lives in Board (it owns the grid); the turn/termination rules live in Game. Extending to Connect4 means a gravity-aware Board - Game doesn't change.
+
+### Key design decisions
+1. Win check after each move from the last placed piece only (row, col, 2 diagonals) - O(N) instead of rescanning the board.
+2. Piece as enum; no null checks on board - use Optional or EMPTY symbol.
+3. Game class enforces turn order and game-over state.
+
+### Code
+
+```java
+enum Piece { X, O, EMPTY }
+
+class Board {
+    private final int n; private final Piece[][] grid;
+    Board(int n) { this.n = n; grid = new Piece[n][n];
+        for (Piece[] row : grid) Arrays.fill(row, Piece.EMPTY); }
+
+    boolean place(int r, int c, Piece p) {
+        if (r < 0 || c < 0 || r >= n || c >= n || grid[r][c] != Piece.EMPTY) return false;
+        grid[r][c] = p; return true;
+    }
+
+    /** Win check starting from the last move. */
+    boolean hasWon(int r, int c, Piece p) {
+        boolean rowWin = true, colWin = true, diag1 = true, diag2 = true;
+        for (int i = 0; i < n; i++) {
+            if (grid[r][i] != p) rowWin = false;
+            if (grid[i][c] != p) colWin = false;
+            if (grid[i][i] != p) diag1 = false;
+            if (grid[i][n - 1 - i] != p) diag2 = false;
+        }
+        return rowWin || colWin || (r == c && diag1) || (r + c == n - 1 && diag2);
+    }
+
+    boolean isFull() { return Arrays.stream(grid).flatMap(Arrays::stream).noneMatch(p -> p == Piece.EMPTY); }
+}
+
+class Game {
+    private final Board board = new Board(3);
+    private Piece current = Piece.X;
+    private boolean over = false; private Piece winner = Piece.EMPTY;
+
+    public synchronized boolean move(int r, int c) {
+        if (over) return false;
+        if (!board.place(r, c, current)) return false;
+        if (board.hasWon(r, c, current)) { over = true; winner = current; }
+        else if (board.isFull()) { over = true; }
+        else current = (current == Piece.X) ? Piece.O : Piece.X;
+        return true;
+    }
+    public boolean isOver() { return over; }
+    public Optional<Piece> winner() { return winner == Piece.EMPTY ? Optional.empty() : Optional.of(winner); }
+}
+```
+
+**Key talking points**: last-move win check is the optimization that matters; NxN is free with the loop; follow-up: Connect4 (check k-in-line from last piece, gravity column), or unbeatable AI via minimax.
+
+---
+
+## 31. Splitwise
+
+### Requirements
+- Users add expenses in a group (or pairwise): amount + payer + splits (equal / exact / percent); show net balances; simplify debts to minimize transfers.
+- Edge cases: splits must sum to amount (validate); percent rounding (largest remainder); a user with zero net should not appear.
+
+### Design
+
+Core classes: `Expense` (abstract - holds payer, total, participants; declares `shares()`), `EqualExpense`, `ExactExpense`, `PercentExpense` (subclasses implement the split), `User`, `Group` (optional aggregate of expenses), `BalanceService` (derives net positions and simplifies debts). Pattern: polymorphism over split type with shared validation in the base - adding a "shares by ratio" expense is a new subclass, zero changes elsewhere.
+
+### Key design decisions
+1. **Expense type hierarchy**: abstract `Expense` with `abstract Map<User, Money> shares()`; Equal / Exact / Percent subclasses (Template-ish: shared validation in base).
+2. Store ledger lines per expense (double-entry style: payer credited, each participant debited) - balances are derived by summing.
+3. **Simplify debts** = graph problem: compute net per user, greedy match largest creditor with largest debtor (classic min-cash-flow greedy works well in practice; exact optimum is NP-hard - mention it).
+
+### Code
+
+```java
+record Money(BigDecimal amount) {
+    Money { if (amount.signum() < 0) throw new IllegalArgumentException(); }
+    static final Money ZERO = new Money(BigDecimal.ZERO);
+    Money add(Money o) { return new Money(amount.add(o.amount())); }
+    Money negate() { return new Money(amount.negate()); }
+}
+
+abstract class Expense {
+    protected final User paidBy; protected final Money total; protected final List<User> participants;
+    Expense(User payer, Money total, List<User> parts) { paidBy = payer; this.total = total; participants = parts; }
+
+    /** Each participant's share (including the payer). */
+    abstract Map<User, Money> shares();
+
+    protected void validateTotal(Map<User, Money> split) {
+        Money sum = split.values().stream().reduce(Money.ZERO, Money::add);
+        if (sum.amount().compareTo(total.amount()) != 0) throw new IllegalArgumentException("shares != total");
+    }
+}
+
+class EqualExpense extends Expense {
+    EqualExpense(User payer, Money total, List<User> parts) { super(payer, total, parts); }
+    public Map<User, Money> shares() {
+        BigDecimal each = total.amount().divide(BigDecimal.valueOf(participants.size()), 2, RoundingMode.DOWN);
+        Map<User, Money> m = new HashMap<>();
+        for (User u : participants) m.put(u, new Money(each));
+        validateTotal(m);                       // remainder handled by caller padding or DOWN+pad
+        return m;
+    }
+}
+
+class ExactExpense extends Expense {
+    private final Map<User, Money> exact;
+    ExactExpense(User payer, Money total, Map<User, Money> exact) { super(payer, total, List.copyOf(exact.keySet())); this.exact = exact; }
+    public Map<User, Money> shares() { validateTotal(exact); return exact; }
+}
+
+class BalanceService {
+    /** Net position per user: + means others owe them. */
+    public Map<User, Money> netBalances(List<Expense> expenses) {
+        Map<User, Money> net = new HashMap<>();
+        for (Expense e : expenses) {
+            net.merge(e.paidBy, e.total, Money::add);                 // payer covered everything
+            e.shares().forEach((u, share) -> net.merge(u, share.negate(), Money::add));
+        }
+        net.values().removeIf(m -> m.amount().compareTo(BigDecimal.ZERO) == 0);
+        return net;
+    }
+
+    /** Greedy simplify: match largest creditor with largest debtor. */
+    public List<String> simplify(Map<User, Money> net) {
+        List<String> transfers = new ArrayList<>();
+        List<Map.Entry<User, Money>> cred = net.entrySet().stream()
+                .filter(e -> e.getValue().amount().signum() > 0).toList();
+        List<Map.Entry<User, Money>> debt = net.entrySet().stream()
+                .filter(e -> e.getValue().amount().signum() < 0).toList();
+        // implementation: sort desc, two-pointer match, emit "A pays B Rs.X"
+        return transfers;
+    }
+}
+```
+
+**Key talking points**: always validate split sums (the first bug interviewers probe); percent rounding -> allocate remainder to the largest share; simplify-debts greedy is fine - say optimal is NP-hard and this is what Splitwise actually does.
+
+---
+
+## 32. BookMyShow
+
+### Requirements
+- Cinemas have screens; screens run shows (movie + time); each show has seats; users hold seats (TTL) then pay to confirm; one seat sold exactly once.
+- Edge cases: two users hold the same seat (hold is exclusive or first-come); payment timeout releases hold; user cancels a confirmed booking (refund policy).
+
+### Design
+
+Core classes: `Show` (aggregate root: seatId -> SeatStatus map, hold expiries), `Movie`, `Screen`, `Seat` (physical, referenced by id), `Booking` (confirmed seat). Same architecture as Hotel inventory: holds are claims with TTL, sweeper reclaims, confirm converts hold to booking. The contention boundary is one show - two shows never block each other.
+
+### Key design decisions
+1. **Show is the aggregate**: seats live per show (same physical seat exists independently in each show). Contention boundary = one show's seat.
+2. **Hold with TTL** (like hotel inventory): `hold(seat)` returns a token valid 10 min; sweeper releases expired holds; confirm converts hold to booking; pay-then-confirm ordering.
+3. Concurrency: per-show lock OR per-seat `AtomicBoolean`/compare-and-set; at scale, the DB unique constraint (show_id, seat_id) in the booking table is the real guarantee.
+
+### Code
+
+```java
+enum SeatStatus { AVAILABLE, HELD, BOOKED }
+
+class Show {
+    private final String id; private final Movie movie; private final Screen screen;
+    private final Instant startTime;
+    private final Map<String, SeatStatus> seats = new ConcurrentHashMap<>();  // seatId -> status
+    private final Map<String, Long> holdExpiry = new ConcurrentHashMap<>();   // seatId -> hold expiry epochMs
+    Show(String id, Movie m, Screen s, Instant t, List<String> seatIds) {
+        this.id = id; movie = m; screen = s; startTime = t;
+        seatIds.forEach(sid -> seats.put(sid, SeatStatus.AVAILABLE));
+    }
+
+    /** Atomic claim: only one user can hold a seat. */
+    public Optional<String> hold(String seatId, long ttlMillis) {
+        AtomicBoolean ok = new AtomicBoolean(false);
+        seats.compute(seatId, (sid, cur) -> {
+            if (cur == SeatStatus.AVAILABLE) { ok.set(true); return SeatStatus.HELD; }
+            return cur;                                   // HELD/BOOKED -> unchanged
+        });
+        if (ok.get()) {
+            holdExpiry.put(seatId, System.currentTimeMillis() + ttlMillis);
+            return Optional.of(UUID.randomUUID().toString());   // hold token
+        }
+        return Optional.empty();
+    }
+
+    public synchronized boolean confirm(String seatId, String holdToken) {
+        Long exp = holdExpiry.get(seatId);
+        if (exp == null || exp < System.currentTimeMillis()) return false;   // hold expired
+        if (seats.get(seatId) == SeatStatus.HELD) {
+            seats.put(seatId, SeatStatus.BOOKED);
+            holdExpiry.remove(seatId);
+            return true;
+        }
+        return false;
+    }
+
+    /** Sweeper job: release expired holds back to AVAILABLE. */
+    public int releaseExpiredHolds() {
+        long now = System.currentTimeMillis(); int released = 0;
+        for (var e : holdExpiry.entrySet()) {
+            if (e.getValue() < now && seats.replace(e.getKey(), SeatStatus.HELD, SeatStatus.AVAILABLE)) {
+                holdExpiry.remove(e.getKey()); released++;
+            }
+        }
+        return released;
+    }
+}
+```
+
+**Key talking points**: `ConcurrentHashMap.compute` makes hold atomic (no check-then-act); sweeper converts abandoned holds back; same model powers concert/sports ticketing - mention waiting lists and dynamic pricing as extensions.
+
+---
+
+## 33. Food Delivery (Zomato-style)
+
+### Requirements
+- Customer browses restaurant menus, places order (items + quantities), pays; restaurant accepts/rejects; delivery agent assigned; order delivered; ratings.
+- Edge cases: item unavailable after order placed (refund line item); restaurant rejects (auto-refund); no delivery agent (retry / expand radius, same as ride matching); order cancellation window.
+
+### Design
+
+Core classes: `Order` (aggregate root + state machine), `Customer`, `Restaurant` (menu + prep time), `MenuItem`, `DeliveryAgent`, `Payment` (lifecycle mirrors the order). Last-leg agent matching reuses the ride-booking design: geo-index of available agents + atomic claim. The service layer is thin; every invariant (can only advance from ACCEPTED, etc.) lives inside Order.
+
+### Key design decisions
+1. **Order is an aggregate with a state machine**: PLACED -> ACCEPTED -> PREPARING -> READY_FOR_PICKUP -> PICKED_UP -> DELIVERED (+ REJECTED / CANCELLED). Every transition guards its precondition.
+2. **Reuse the ride-matching machinery** for the last leg (nearest available agent); prep time from restaurant feeds ETA.
+3. Pricing as strategy; restaurant menu cached but order validates against live menu version (price change race - accept the version at order time).
+4. Payments: hold at PLACED, capture at ACCEPTED, auto-release on REJECTED/CANCEL timeout (payment state machine mirroring order state machine).
+
+### Code
+
+```java
+enum OrderStatus { PLACED, ACCEPTED, PREPARING, READY_FOR_PICKUP, PICKED_UP, DELIVERED, REJECTED, CANCELLED }
+
+class Order {
+    private final String id; private final Customer customer; private final Restaurant restaurant;
+    private final Map<MenuItem, Integer> items; private final Money total;
+    private final int menuVersion;                 // snapshot of prices at order time
+    private OrderStatus status = OrderStatus.PLACED;
+    private DeliveryAgent agent;
+
+    public synchronized void accept() {
+        if (status != OrderStatus.PLACED) throw new IllegalStateException();
+        status = OrderStatus.ACCEPTED;               // triggers payment capture + prep
+    }
+    public synchronized void advance() {             // PREPARING -> READY -> PICKED -> DELIVERED
+        status = switch (status) {
+            case ACCEPTED -> OrderStatus.PREPARING;
+            case PREPARING -> OrderStatus.READY_FOR_PICKUP;
+            case READY_FOR_PICKUP -> OrderStatus.PICKED_UP;
+            case PICKED_UP -> OrderStatus.DELIVERED;
+            default -> throw new IllegalStateException("Cannot advance from " + status);
+        };
+    }
+    public synchronized void reject() {
+        if (status != OrderStatus.PLACED) throw new IllegalStateException();
+        status = OrderStatus.REJECTED;               // auto-refund, release held payment
+    }
+    public synchronized void assignAgent(DeliveryAgent a) {
+        if (status != OrderStatus.READY_FOR_PICKUP && status != OrderStatus.PREPARING)
+            throw new IllegalStateException();
+        agent = a;
+    }
+    public OrderStatus status() { return status; }
+}
+```
+
+**Key talking points**: menu-version snapshot resolves the "price changed between browse and checkout" race; payment lifecycle mirrors order lifecycle (authorize -> capture -> refund); matching agents is the same atomic-claim problem as Uber - say so and the interviewer sees pattern transfer.
+
+---
+
+## 34. Library Management
+
+### Requirements
+- Catalog of books with multiple copies; members borrow/return; due date + fine; reserve a book that's fully checked out; librarian manages catalog.
+- Edge cases: return overdue (fine calc); reserving member gets priority when copy returns; member with unpaid fines blocked from new loans (policy).
+
+### Design
+
+Core classes: `Title` (what gets reserved), `Copy` (what gets loaned - barcode, current loan), `Member`, `Loan` (issue/due/return dates, fine calc), `FinePolicy` (interface), `Reservation` (queue per title). Mirrors Hotel's type-vs-concrete split: reservations queue on Title, loans attach to Copy. Return flow: Copy -> available -> drain reservation queue -> notify first reserver (Observer).
+
+### Key design decisions
+1. **Title vs Copy** (same book-type vs concrete-room idea): Loan is against a Copy; reservation is against a Title.
+2. Return workflow: copy -> available -> check reservation queue for that title -> auto-assign to first reserver (notify, 48h pickup window).
+3. Fine as policy object (per-day rate, grace days, cap) - strategy.
+
+### Code
+
+```java
+class Title { private final String isbn; private final String name; }
+class Copy { private final String barcode; private final Title title; private Loan currentLoan; }
+
+class Member {
+    private final String id; private final String name;
+    private BigDecimal fineBalance = BigDecimal.ZERO;
+    boolean canBorrow() { return fineBalance.compareTo(new BigDecimal(500)) < 0; }  // policy
+}
+
+class Loan {
+    private final Copy copy; private final Member member;
+    private final LocalDate issueDate; private final LocalDate dueDate;
+    private LocalDate returnDate;
+    Loan(Copy c, Member m, int loanDays) { copy = c; member = m;
+        issueDate = LocalDate.now(); dueDate = issueDate.plusDays(loanDays); }
+
+    synchronized void markReturned() { if (returnDate == null) returnDate = LocalDate.now(); }
+    boolean isOverdue(LocalDate today) { return returnDate == null && today.isAfter(dueDate); }
+
+    Money fine(FinePolicy policy) {
+        if (returnDate == null || !returnDate.isAfter(dueDate)) return Money.ZERO;
+        return policy.compute(dueDate, returnDate);
+    }
+}
+
+interface FinePolicy { Money compute(LocalDate due, LocalDate returned); }
+class PerDayFine implements FinePolicy {
+    private final Money perDay; private final int graceDays; private final Money cap;
+    public Money compute(LocalDate due, LocalDate returned) {
+        long days = Math.max(0, ChronoUnit.DAYS.between(due, returned) - graceDays);
+        Money fine = perDay.amount().multiply(BigDecimal.valueOf(days)) /* -> Money */;
+        return fine.amount().compareTo(cap.amount()) > 0 ? cap : fine;
+    }
+}
+```
+
+**Key talking points**: Title/Copy split mirrors Hotel's type-vs-room - say that explicitly, it shows transfer; reservation queue consumed on return is an Observer (library event -> notify reserver); fine policy injected for different member tiers.
+
+---
+
+## 35. URL Shortener (LLD view)
+
+### Requirements
+- longURL -> short code (6-8 chars); redirect code -> longURL fast; same longURL may map to same code (optional); codes must not be guessable if private.
+- Edge cases: collision on code generation (retry); expired/invalid code (404); custom aliases (uniqueness constraint).
+
+### Design
+
+Core classes: `UrlShortener` (service: shorten/resolve), `UrlEntry` (code, longUrl, createdAt), `Base62` (stateless codec), id source (counter or random - two strategies, pick one per deployment). Store behind `UrlStore` interface (Map today, KV/DB in production) so the service never touches storage directly.
+
+### Key design decisions
+1. **Two ID strategies**: (a) base62 of a monotonic counter (simple, semi-sequential = somewhat guessable), (b) base62 of a random 64-bit (collision retry with DB unique constraint). Base62 alphabet [0-9a-zA-Z].
+2. Store is `Map<code, UrlEntry>` / KV DB; redirect is a pure read (cache hot entries).
+3. Guessability vs collision-rate trade-off: longer code = safer random picks (birthday paradox - 6 chars base62 is plenty for billions).
+
+### Code
+
+```java
+class Base62 {
+    private static final String ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    static String encode(long value) {
+        StringBuilder sb = new StringBuilder();
+        while (value > 0) { sb.append(ALPHABET.charAt((int) (value % 62))); value /= 62; }
+        return sb.reverse().toString();
+    }
+}
+
+class UrlEntry { final String code; final String longUrl; final Instant createdAt; }
+
+class UrlShortener {
+    private final Map<String, UrlEntry> byCode = new ConcurrentHashMap<>();
+    private final Map<String, String> byLongUrl = new ConcurrentHashMap<>();   // optional dedup
+    private final AtomicLong counter = new AtomicLong(1000000);
+    private static final int CODE_LEN = 7;
+
+    public String shorten(String longUrl) {
+        String existing = byLongUrl.get(longUrl);              // optional: reuse code
+        if (existing != null) return existing;
+        while (true) {
+            String code = nextCode();
+            UrlEntry entry = new UrlEntry(code, longUrl, Instant.now());
+            if (byCode.putIfAbsent(code, entry) == null) {     // atomic claim, collision-safe
+                byLongUrl.putIfAbsent(longUrl, code);
+                return code;
+            }
+        }
+    }
+
+    public String resolve(String code) {
+        UrlEntry e = byCode.get(code);
+        if (e == null) throw new NoSuchElementException("code");   // -> 404
+        return e.longUrl;
+    }
+
+    private String nextCode() {
+        long v = ThreadLocalRandom.current().nextLong(1, (long) Math.pow(62, CODE_LEN));
+        return pad(Base62.encode(v));
+    }
+    private String pad(String s) { return "0".repeat(CODE_LEN - s.length()) + s; }
+}
+```
+
+**Key talking points**: `putIfAbsent` loop = collision retry, no synchronized needed; counter vs random - random for privacy, counter if you want shorter codes and don't care about enumeration; this is the LLD half - the HLD half (routing, caching, DB sharding) is where follow-ups go.
+
+---
+
+## 36. Stock Exchange
+
+### Requirements
+- Traders place BUY/SELL orders (symbol, qty, price, type LIMIT/MARKET); engine matches orders by price-time priority; executed trades update positions; cancel open order.
+- Edge cases: partial fills (remaining qty stays in book); MARKET order fills against best available; two orders arriving simultaneously (single matching thread = serializable).
+
+### Design
+
+Core classes: `Order` (id, side, price, qty, remaining - remaining is the mutable part), `OrderBook` (per symbol: bids TreeMap desc, asks TreeMap asc, each price level a FIFO deque), `Trade` (immutable record of a fill), `MatchingEngine` (single thread per symbol, pulls from an inbound queue). Single-writer design: no locks on the book itself; serializability comes from one matcher thread per symbol - same trick as the traffic controller.
+
+### Key design decisions
+1. **Order book per symbol**: bids = max-heap (TreeMap desc), asks = min-heap; each price level holds a FIFO queue (time priority). TreeMap gives O(log N) best-price access.
+2. **Single matcher thread per symbol** (or global): takes from order queues, runs matching loop, emits trades - serializability without locks.
+3. Partial fills: order holds remainingQty; trade records qty + price; positions updated in the same "transaction".
+
+### Code
+
+```java
+enum Side { BUY, SELL }
+
+class Order {
+    final String id; final String symbol; final Side side;
+    final int price;              // 0 = MARKET (fills at opposite best)
+    final int qty; int remaining;
+    final Instant ts = Instant.now();
+    Order(String id, String sym, Side s, int price, int qty) {
+        this.id = id; symbol = sym; side = s; this.price = price; this.qty = remaining = qty;
+    }
+    boolean isFilled() { return remaining == 0; }
+}
+
+record Trade(String buyOrderId, String sellOrderId, String symbol, int price, int qty, Instant ts) {}
+
+class OrderBook {
+    private final TreeMap<Integer, Deque<Order>> bids = new TreeMap<>(Comparator.reverseOrder());
+    private final TreeMap<Integer, Deque<Order>> asks = new TreeMap<>();
+
+    /** Returns list of trades produced by matching this incoming order. */
+    List<Trade> match(Order incoming) {
+        List<Trade> trades = new ArrayList<>();
+        TreeMap<Integer, Deque<Order>> book = incoming.side == Side.BUY ? asks : bids;
+        while (!incoming.isFilled() && !book.isEmpty()) {
+            int best = book.firstKey();
+            boolean priceOk = incoming.price == 0                     // MARKET always takes best
+                || (incoming.side == Side.BUY ? incoming.price >= best : incoming.price <= best);
+            if (!priceOk) break;
+            Deque<Order> level = book.get(best);
+            Order resting = level.peekFirst();
+            int qty = Math.min(incoming.remaining, resting.remaining);
+            resting.remaining -= qty; incoming.remaining -= qty;
+            trades.add(new Trade(incoming.side == Side.BUY ? incoming.id : resting.id,
+                                 incoming.side == Side.BUY ? resting.id : incoming.id,
+                                 incoming.symbol, best, qty, Instant.now()));
+            if (resting.isFilled()) level.pollFirst();
+            if (level.isEmpty()) book.remove(best);
+        }
+        if (!incoming.isFilled()) addResting(incoming);
+        return trades;
+    }
+
+    private void addResting(Order o) {
+        TreeMap<Integer, Deque<Order>> book = o.side == Side.BUY ? bids : asks;
+        if (o.price == 0) return;                    // unfilled MARKET order is cancelled
+        book.computeIfAbsent(o.price, k -> new ArrayDeque<>()).addLast(o);
+    }
+}
+```
+
+**Key talking points**: price-time priority falls out of TreeMap + FIFO deque; partial fill leaves the resting order in the book; matcher single-threaded per symbol = free serializability (same trick as the traffic controller); follow-ups: market/limit/stop orders, circuit breakers, position limits.
+
+---
+
+## 37. Meeting Platform (Zoom-style)
+
+### Requirements
+- Host creates meeting (id, password, settings); participants join/leave; roles HOST/COHOST/PARTICIPANT; mute/unmute self; host can mute anyone; screen share one at a time; meeting ends for all when host leaves (or reassign).
+- Edge cases: join after meeting locked; duplicate join same user (kick old session); capacity limit.
+
+### Design
+
+Core classes: `Meeting` (aggregate root: participants, lock flag, active sharer, capacity), `Participant` (userId, role, mute flags), `Role` enum (HOST, COHOST, PARTICIPANT - permission source). Media transport (WebRTC/SFU) is explicitly out of scope - this is the control plane. The one invariant worth stating aloud: at most one active screen share, enforced only in `startShare()`.
+
+### Key design decisions
+1. **Meeting is the aggregate** holding participants + a single `sharer` reference (invariant: at most one active share - enforce in `startShare()`).
+2. Role checks on privileged actions (mute-others, lock, end) - a `Role` enum + guard in Meeting, not scattered ifs.
+3. Media itself is out of LLD scope: model `MediaStream` as a participant's audio/video state (muted flags), actual transport is WebRTC (tie back to the streaming-protocols section).
+
+### Code
+
+```java
+enum Role { HOST, COHOST, PARTICIPANT }
+
+class Participant {
+    final String userId; Role role;
+    boolean audioMuted = true, videoMuted = true;
+    Participant(String id, Role r) { userId = id; role = r; }
+    boolean canModerate() { return role == Role.HOST || role == Role.COHOST; }
+}
+
+class Meeting {
+    private final String id; private final Participant host;
+    private final Map<String, Participant> participants = new ConcurrentHashMap<>();
+    private final int capacity;
+    private volatile boolean locked = false;
+    private volatile String activeSharer = null;      // invariant: one sharer at a time
+
+    Meeting(String id, Participant host, int capacity) {
+        this.id = id; this.host = host; this.capacity = capacity;
+        participants.put(host.userId, host);
+    }
+
+    public synchronized void join(Participant p) {
+        if (locked) throw new IllegalStateException("Meeting is locked");
+        if (participants.size() >= capacity) throw new IllegalStateException("Full");
+        participants.put(p.userId, p);                // replaces stale duplicate session
+    }
+
+    public synchronized void leave(String userId) {
+        Participant p = participants.remove(userId);
+        if (p == null) return;
+        if (userId.equals(host.userId)) end();        // policy: host leaving ends meeting
+        if (userId.equals(activeSharer)) activeSharer = null;
+    }
+
+    public synchronized void muteOther(String actorId, String targetId) {
+        Participant actor = participants.get(actorId);
+        if (actor == null || !actor.canModerate()) throw new SecurityException("Not allowed");
+        Participant target = participants.get(targetId);
+        if (target != null) target.audioMuted = true;   // host can force-mute
+    }
+
+    public synchronized void startShare(String userId) {
+        if (!participants.containsKey(userId)) throw new IllegalStateException("Not in meeting");
+        if (activeSharer != null && !activeSharer.equals(userId))
+            throw new IllegalStateException("Someone is already sharing");
+        activeSharer = userId;
+    }
+
+    public synchronized void end() { participants.clear(); activeSharer = null; }
+    public int participantCount() { return participants.size(); }
+}
+```
+
+**Key talking points**: single-sharer invariant enforced in exactly one place; role object keeps permission logic out of the meeting flow; "host leaves -> end or promote" is a policy decision - ask the interviewer; media plane = WebRTC SFU, this is the control plane.
+
+---
+
+## 38. Distributed Cache
+
+### Requirements
+- get/put/delete with O(1)-ish latency; capacity per node with LRU eviction; cluster scales by adding nodes; minimal key remapping on node add/remove.
+- Edge cases: node dies mid-operation (replication or miss); hot key on one node (replication of hot keys); concurrent put same key (last-write-wins is acceptable - say it).
+
+### Design
+
+Core classes: `DistributedCache` (client facade: get/put), `ConsistentHashRing` (routes keys to nodes, TreeMap of hash -> node, virtual nodes for balance), `CacheNode` (wraps a local LRU cache from section 27). Key->node mapping is pure computation, so routing needs no coordination; cluster membership changes (add/remove node) are the only writes to the ring. Replication: put also writes the next R clockwise nodes (fire-and-forget, repair on read).
+
+### Key design decisions
+1. **Consistent hashing ring** (TreeMap of hash->node): add/remove node remaps only ~1/N of keys (vs modulo hashing remapping almost all).
+2. Each node = an LRU cache (reuse section 27) + optional async replication to next R nodes on the ring.
+3. Client/router computes node by walking the ring clockwise; virtual nodes (replicas of each physical node on the ring) smooth distribution.
+
+### Code
+
+```java
+class CacheNode {
+    private final String id;
+    private final LRUCache<String, byte[]> store;
+    CacheNode(String id, int capacity) { this.id = id; store = new LRUCache<>(capacity); }
+    byte[] get(String k) { return store.get(k); }
+    void put(String k, byte[] v) { store.put(k, v); }
+}
+
+class ConsistentHashRing {
+    private final TreeMap<Long, CacheNode> ring = new TreeMap<>();
+    private final int virtualNodes;                    // per physical node
+
+    ConsistentHashRing(int virtualNodes) { this.virtualNodes = virtualNodes; }
+
+    static long hash(String key) {                     // production: murmur3/xxhash
+        return key.hashCode() & 0x7fffffffffffffffL;
+    }
+
+    void addNode(CacheNode node) {
+        for (int i = 0; i < virtualNodes; i++)
+            ring.put(hash(node + "#" + i), node);
+    }
+
+    void removeNode(CacheNode node) {
+        for (int i = 0; i < virtualNodes; i++)
+            ring.remove(hash(node + "#" + i));
+    }
+
+    CacheNode route(String key) {
+        long h = hash(key);
+        Map.Entry<Long, CacheNode> e = ring.ceilingEntry(h);
+        return (e != null) ? e.getValue() : ring.firstEntry().getValue();   // wrap around
+    }
+}
+
+class DistributedCache {
+    private final ConsistentHashRing ring = new ConsistentHashRing(150);   // ~150 vnodes/node
+    byte[] get(String key) { return ring.route(key).get(key); }            // miss -> fallback/replica
+    void put(String key, byte[] value) { ring.route(key).put(key, value); }
+    void addNode(CacheNode n) { ring.addNode(n); }      // only ~1/N keys move
+}
+```
+
+**Key talking points**: virtual nodes fix distribution skew; replication factor R = write to R clockwise successors, read falls back on miss; "only ~1/N keys remap" is the entire selling point of consistent hashing vs `hash % N`; this is the LLD core - gossip/raft for cluster membership is the distributed-systems follow-up.
+
+---
+
+## 39. Git (Version Control)
+
+### Requirements
+- Working directory -> stage changes -> commit with message; commit history is a DAG (branches, merge); checkout any commit; diff between commits.
+- Edge cases: merge conflict detection; commit is immutable once created; detached HEAD (checkout old commit).
+
+### Design
+
+Core classes: `Blob` (file bytes), `Tree` (named pointers to blobs/trees), `Commit` (tree + parents + message - the DAG node), `Branch` (a movable pointer to a commit hash), `Repository` (operations), `GitObjectStore` (content-hash -> object, the single source of truth). Everything is immutable once hashed - branches are the only mutable state. This immutability is why history is shareable and merges are just pointer moves.
+
+### Key design decisions
+1. **Content-addressable object store**: Blob (file content), Tree (directory listing of blobs/trees), Commit (tree + parent(s) + message + author). Everything keyed by content hash (SHA-1) - same content = same id, automatic dedup, integrity.
+2. **Commit = snapshot pointer, not a delta** (deltas are a storage optimization, hide them).
+3. Merge = 3-way: compare two commits against their common ancestor (recursively on trees); conflict when both sides changed the same line region.
+
+### Code
+
+```java
+record Blob(String hash, byte[] content) {}
+
+record TreeEntry(String name, String type, String hash) {}   // type = "blob" | "tree"
+
+class GitObjectStore {
+    private final Map<String, Object> objects = new ConcurrentHashMap<>();
+    void put(String hash, Object o) { objects.putIfAbsent(hash, o); }   // dedup free
+    <T> T get(String hash, Class<T> type) { return type.cast(objects.get(hash)); }
+}
+
+record Commit(String hash, List<String> parents, String treeHash,
+              String author, String message, Instant ts) {}
+
+class Branch { String name; String headCommitHash; }
+
+class Repository {
+    private final GitObjectStore store = new GitObjectStore<>();
+    private final Map<String, Branch> branches = new HashMap<>();
+    private Branch current;
+
+    static String hashOf(byte[] content) {           // SHA-1 in production
+        return Integer.toHexString(Arrays.hashCode(content));
+    }
+
+    String commit(String message, Map<String, byte[]> stagedFiles, List<String> parents) {
+        String treeHash = buildTree(stagedFiles);
+        String h = hashOf((message + treeHash + parents + System.nanoTime()).getBytes());
+        store.put(h, new Commit(h, parents, treeHash, "me", message, Instant.now()));
+        current.headCommitHash = h;
+        return h;
+    }
+
+    /** Fast-forward if ancestor; otherwise 3-way merge. */
+    void merge(Branch other) {
+        String base = findCommonAncestor(current.headCommitHash, other.headCommitHash);
+        if (base.equals(other.headCommitHash)) return;                 // already up to date
+        if (base.equals(current.headCommitHash)) {                     // fast-forward
+            current.headCommitHash = other.headCommitHash; return;
+        }
+        String merged = threeWayMerge(base, current.headCommitHash, other.headCommitHash);
+        current.headCommitHash = commit("merge " + other.name, merged, List.of(current.headCommitHash, other.headCommitHash));
+    }
+
+    private String findCommonAncestor(String a, String b) { /* BFS on parent DAG */ return a; }
+    private String threeWayMerge(String base, String ours, String theirs) { /* tree diff + conflict markers */ return base; }
+    private String buildTree(Map<String, byte[]> files) { /* blob per file, tree per dir */ return "treeHash"; }
+}
+```
+
+**Key talking points**: content addressing gives dedup + tamper detection for free; commits form a DAG, branches are just movable pointers; "snapshot vs delta" is a classic question - snapshots in the model, deltas in storage; conflict markers (`<<<<<<<`) are just the 3-way merge failing to reconcile a hunk.
+
+---
+
+## 40. Thread-Safe Singleton
+
+### Requirements
+- Exactly one instance in the JVM; lazy or eager; safe under concurrent access; serialization- and reflection-proof (bonus points).
+
+### Design
+
+Decision matrix: enum (best - JVM-enforced single instance, reflection/serialization safe), holder idiom (lazy, lock-free, but reflection can break it), double-checked locking (works only with volatile, subtle published-without-construction hazard), eager (simplest, loads early). The design question here is not "how" but "which guarantees do you need" - answer enum first and explain the attack surfaces the others leave open.
+
+### The four options (know all four, rank them)
+
+```java
+// 1. ENUM - the best answer. JVM guarantees one instance, lazy enough, and
+//    immune to reflection and serialization attacks.
+enum ConfigManager {
+    INSTANCE;
+    private final Properties props = load();
+    public String get(String key) { return props.getProperty(key); }
+    private static Properties load() { /* ... */ return new Properties(); }
+}
+
+// 2. Initialization-on-demand holder - lazy, zero locking, JVM class-init semantics.
+class LazySingleton {
+    private LazySingleton() {}
+    private static class Holder { static final LazySingleton INSTANCE = new LazySingleton(); }
+    public static LazySingleton getInstance() { return Holder.INSTANCE; }
+}
+
+// 3. Double-checked locking - works ONLY with volatile; otherwise a thread can see
+//    a half-constructed object (the 'this-escape' problem).
+class DclSingleton {
+    private static volatile DclSingleton instance;
+    public static DclSingleton getInstance() {
+        if (instance == null) {
+            synchronized (DclSingleton.class) {
+                if (instance == null) instance = new DclSingleton();
+            }
+        }
+        return instance;
+    }
+}
+
+// 4. Eager - simplest, loads when class loads.
+class EagerSingleton {
+    private static final EagerSingleton INSTANCE = new EagerSingleton();
+    public static EagerSingleton getInstance() { return INSTANCE; }
+}
+```
+
+**Key talking points**: enum wins - say it first and explain the reflection/serialization attacks the others suffer; DCL without `volatile` is the classic trap (object published before constructor finishes); Bill Pugh holder idiom is the "clever Java" answer if enums feel like cheating.
+
+---
+
+## 41. Custom Thread Pool
+
+### Requirements
+- Fixed worker threads consuming from a queue; submit(Runnable) non-blocking up to queue capacity; beyond capacity apply rejection policy; graceful shutdown completes queued tasks; shutdownNow interrupts workers.
+- Edge cases: submit after shutdown (Reject); worker dies from a task exception (replace it); idle workers must not spin (use blocking take).
+
+### Design
+
+Core classes: `SimpleThreadPool` (owns workers + queue + shutdown flag), worker threads (loop: take -> run, catch Throwable), `BlockingQueue<Runnable>` (the handoff), `RejectionPolicy` (interface). Producer-consumer with the queue as the only coupling; workers are anonymous and replaceable. Shutdown flag is volatile so submitters see it without locking; queue capacity is what provides backpressure to submitters.
+
+### Key design decisions
+1. **BlockingQueue as the handoff** (reuse section 42) - producer (submitters) never couples to workers.
+2. Workers are long-lived daemon threads looping `take()` -> `run()`, catching Throwable so one bad task doesn't kill the pool.
+3. Rejection policy as strategy: Abort, CallerRuns, DropOldest.
+
+### Code
+
+```java
+interface RejectionPolicy { void reject(Runnable task, SimpleThreadPool pool); }
+class AbortPolicy implements RejectionPolicy {
+    public void reject(Runnable task, SimpleThreadPool pool) { throw new RejectedExecutionException(); }
+}
+
+class SimpleThreadPool {
+    private final BlockingQueue<Runnable> queue;
+    private final List<Thread> workers;
+    private final RejectionPolicy rejection;
+    private volatile boolean shutdown = false;
+
+    SimpleThreadPool(int threads, int queueCapacity, RejectionPolicy policy) {
+        queue = new LinkedBlockingQueue<>(queueCapacity);
+        rejection = policy;
+        workers = new ArrayList<>();
+        for (int i = 0; i < threads; i++) {
+            Thread t = new Thread(this::workerLoop, "pool-worker-" + i);
+            t.setDaemon(true);
+            workers.add(t); t.start();
+        }
+    }
+
+    public void submit(Runnable task) {
+        if (shutdown) { rejection.reject(task, this); return; }
+        if (!queue.offer(task)) rejection.reject(task, this);   // full -> policy decides
+    }
+
+    private void workerLoop() {
+        while (!shutdown || !queue.isEmpty()) {
+            try { queue.take().run(); }
+            catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
+            catch (Throwable t) { /* log; worker survives, task died */ }
+        }
+    }
+
+    public void shutdown() { shutdown = true; workers.forEach(Thread::interrupt); }  // drain + interrupt idle
+    public boolean isShutdown() { return shutdown; }
+}
+class RejectedExecutionException extends RuntimeException {}
+```
+
+**Key talking points**: catch `Throwable` (not just Exception) around task.run or one Error kills your worker; shutdown vs shutdownNow = drain-queue+interrupt vs stop-everything; then point at `java.util.concurrent.ThreadPoolExecutor` and name its params (core, max, keepAlive, queue, policy) - interviewers love the mapping.
+
+---
+
+## 42. Blocking Queue
+
+### Requirements
+- Bounded queue; put blocks when full; take blocks when empty; FIFO; support multiple producers and consumers.
+
+### Design
+
+Core classes: `SimpleBlockingQueue` (ring buffer + one ReentrantLock + two Conditions). One lock keeps the invariants trivially provable; the two conditions split "waiters for non-empty" from "waiters for non-full" so a put wakes exactly one consumer and vice versa. Design choice to defend: `while` around every await (spurious wakeups + signal stealing), and signal() instead of signalAll() (only one waiter can proceed anyway).
+
+### Key design decisions
+1. **One lock + two Conditions** (notEmpty, notFull) is the textbook answer - simpler than two locks and correct.
+2. `while` (not `if`) around every await - guards spurious wakeups and signal-stealing between multiple consumers.
+3. Circular array ring buffer = no shifting, no allocation in steady state.
+
+### Code
+
+```java
+class SimpleBlockingQueue<T> {
+    private final Object[] items;
+    private final int capacity;
+    private int takeIndex = 0, putIndex = 0, count = 0;
+
+    private final Lock lock = new ReentrantLock();
+    private final Condition notEmpty = lock.newCondition();
+    private final Condition notFull = lock.newCondition();
+
+    SimpleBlockingQueue(int capacity) { this.capacity = capacity; items = new Object[capacity]; }
+
+    public void put(T t) throws InterruptedException {
+        lock.lock();
+        try {
+            while (count == capacity) notFull.await();        // while, never if
+            items[putIndex] = t;
+            putIndex = (putIndex + 1) % capacity;
+            count++;
+            notEmpty.signal();
+        } finally { lock.unlock(); }
+    }
+
+    @SuppressWarnings("unchecked")
+    public T take() throws InterruptedException {
+        lock.lock();
+        try {
+            while (count == 0) notEmpty.await();
+            T t = (T) items[takeIndex];
+            items[takeIndex] = null;                          // help GC
+            takeIndex = (takeIndex + 1) % capacity;
+            count--;
+            notFull.signal();
+            return t;
+        } finally { lock.unlock(); }
+    }
+
+    public int size() { lock.lock(); try { return count; } finally { lock.unlock(); } }
+}
+```
+
+**Key talking points**: signal() vs signalAll() - signal is enough here (one producer/one consumer woken per state change) and cheaper; ArrayBlockingQueue uses exactly this shape; the `while` around await is the single most-asked detail.
+
+---
+
+## 43. Producer-Consumer
+
+### Requirements
+- Multiple producers generate work; multiple consumers process it; bounded buffer; consumers shouldn't poll (block when empty); producers back-pressured when full; clean shutdown.
+
+### Design
+
+Actors: producer threads (offer work), consumer threads (take + process), `SimpleBlockingQueue` (bounded handoff - the entire synchronization). Shutdown design: poison pill per consumer; each consumer forwards the pill before exiting so all consumers get one. The queue's boundedness is the backpressure - producers block at capacity instead of growing memory. In production this exact shape is ExecutorService + BlockingQueue.
+
+### Key design decisions
+1. The whole pattern IS the blocking queue (section 42) - this topic tests whether you see that, plus poison-pill shutdown.
+2. Poison pill: enqueue a sentinel task; each consumer that takes it re-enqueues (for others) and exits - orderly drain.
+3. In production: `ExecutorService` + `BlockingQueue`, or just `new LinkedBlockingQueue` + fixed pool.
+
+### Code
+
+```java
+public class ProducerConsumerDemo {
+    private static final String POISON = "POISON";
+
+    public static void main(String[] args) throws InterruptedException {
+        SimpleBlockingQueue<String> queue = new SimpleBlockingQueue<>(10);
+        int consumers = 3;
+
+        for (int i = 0; i < consumers; i++) {                       // consumers
+            new Thread(() -> {
+                while (true) {
+                    try {
+                        String msg = queue.take();
+                        if (msg.equals(POISON)) { queue.put(POISON); return; }  // pass pill on, exit
+                        process(msg);
+                    } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
+                }
+            }).start();
+        }
+
+        for (int i = 0; i < 5; i++) {                               // producers
+            new Thread(() -> {
+                try { for (int j = 0; j < 20; j++) queue.put("task-" + j); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            }).start();
+        }
+
+        Thread.sleep(2000);
+        queue.put(POISON);                                          // shut down orderly
+    }
+    static void process(String m) { /* ... */ }
+}
+```
+
+**Key talking points**: poison pill per consumer (each needs one); interrupt as the back-up shutdown path; if asked to do it without BlockingQueue: wait/notify with the same notEmpty/notFull discipline.
+
+---
+
+## 44. Web Crawler
+
+### Requirements
+- Start from seed URLs; fetch page, extract links, enqueue unseen ones; respect per-host politeness delay; bounded concurrency; terminate when frontier empty; dedup URLs (billions -> Bloom filter).
+- Edge cases: cycles (A->B->A); duplicate URLs differing only by fragment (#x); relative URL resolution; traps (calendar pages - depth limit).
+
+### Design
+
+Core classes: `WebCrawler` (worker orchestration), frontier (`BlockingQueue<String>` - shared work), visited set (ConcurrentHashMap.newKeySet() - dedup + cycle safety), per-host politeness map (last fetch timestamp), Fetcher/Parser (side-effecting, behind an interface so it's mockable). Workers are stateless - any worker can take any URL, which is what makes scaling worker count trivial. Frontier is the persistence boundary (checkpoint it for crash recovery).
+
+### Key design decisions
+1. **Frontier = BlockingQueue; visited = ConcurrentHashMap.newKeySet()** (interview scale) or Bloom filter + DB (web scale, false positives just skip a URL).
+2. Politeness: per-host last-fetch timestamp map; worker sleeps to respect delay; robots.txt honored in production (mention).
+3. Frontier is the persistence boundary - a real crawler checkpoints it (crash recovery).
+
+### Code
+
+```java
+class WebCrawler {
+    private final BlockingQueue<String> frontier = new LinkedBlockingQueue<>();
+    private final Set<String> visited = ConcurrentHashMap.newKeySet();
+    private final Map<String, Long> lastFetchByHost = new ConcurrentHashMap<>();
+    private static final long POLITENESS_MS = 1000;
+    private static final int MAX_DEPTH = 5;
+
+    void crawl(List<String> seeds, int workers) {
+        seeds.forEach(this::enqueue);
+        List<Thread> pool = new ArrayList<>();
+        for (int i = 0; i < workers; i++) {
+            Thread t = new Thread(() -> {
+                while (true) {
+                    String url = frontier.poll();                  // null = drained (real: take + poison)
+                    if (url == null) return;
+                    if (!visited.add(normalize(url))) continue;    // dedup, cycle-safe
+                    String host = hostOf(url);
+                    waitPolitely(host);
+                    Page page = fetch(url);                        // network call
+                    if (depthOf(url) < MAX_DEPTH)
+                        for (String link : page.links())
+                            enqueue(resolve(url, link));
+                }
+            });
+            t.start(); pool.add(t);
+        }
+        pool.forEach(t -> { try { t.join(); } catch (InterruptedException ignored) {} });
+    }
+
+    private void enqueue(String url) { if (visited.add(url)) frontier.offer(url); }
+    private void waitPolitely(String host) {
+        long now = System.currentTimeMillis();
+        Long last = lastFetchByHost.get(host);
+        if (last != null && now - last < POLITENESS_MS)
+            try { Thread.sleep(POLITENESS_MS - (now - last)); } catch (InterruptedException ignored) {}
+        lastFetchByHost.put(host, System.currentTimeMillis());
+    }
+
+    record Page(String url, List<String> links) {}
+    private Page fetch(String url) { /* HTTP GET + parse */ return new Page(url, List.of()); }
+    private String normalize(String u) { return u.split("#")[0]; }         // strip fragment
+    private String resolve(String base, String link) { /* new URL(base, link).toString() */ return link; }
+    private String hostOf(String u) { return u; }
+    private int depthOf(String u) { /* encoded in queue item in production */ return 0; }
+}
+```
+
+**Key talking points**: `visited.add()` atomicity = no URL fetched twice; frontier separates discovery from fetch so workers never block each other; scale-up path: priority frontier (bFS by depth), Bloom filter, distributed frontier (Kafka), per-domain queues for politeness.
+
+---
+
+## 45. Immutable Class
+
+### Requirements
+
+The rules, in the order you should recite them:
+1. Declare the class `final` (no subclassing = no mutable override).
+2. All fields `private final`.
+3. No setters; state set only in the constructor.
+4. Defensive copies of any mutable input (Date, arrays, collections).
+5. If a mutable field must be returned, return a copy.
+6. Don't leak `this` from the constructor (no publishing before construction completes).
+
+### Design
+
+The design is a checklist enforced by construction: final class, private final fields, no mutators, defensive copies in and out, no `this` escape from the constructor. The two real decisions: (1) wrap collections with `Collections.unmodifiableList(new ArrayList<>(input))` - both copy AND wrap, doing only one is the classic bug; (2) prefer immutable types (String, LocalDate, BigDecimal) as fields so defensive copying mostly disappears. Records give you the syntax but not deep immutability - components can still be mutable objects.
+
+### Code
+
+```java
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Date;
+import java.util.List;
+
+final class Employee {
+    private final String name;                    // String is already immutable
+    private final Date joiningDate;               // java.util.Date IS mutable -> defensive copies
+    private final List<String> skills;            // same for collections/arrays
+
+    Employee(String name, Date joiningDate, List<String> skills) {
+        this.name = name;
+        this.joiningDate = new Date(joiningDate.getTime());           // copy IN
+        this.skills = Collections.unmodifiableList(new ArrayList<>(skills));  // copy IN + wrap
+    }
+
+    public Date getJoiningDate() { return new Date(joiningDate.getTime()); }  // copy OUT
+    public List<String> getSkills() { return skills; }                        // already unmodifiable
+    public String getName() { return name; }
+}
+```
+
+**Key talking points**: `java.util.Date` is the classic trap - prefer `LocalDate` (immutable) in modern code; Java records give shallow immutability (fields final) but components can still be mutable objects - records are not a free pass; why bother: trivially thread-safe, safe to cache/share, valid as HashMap keys (hash never changes). String, Integer, BigDecimal, LocalDate are your examples.
+
+---
+
+## 46. Custom Read-Write Lock
+
+### Requirements
+- Many readers OR one writer; readers exclude writers; writers exclude everyone; fair-ish (avoid writer starvation); support lock downgrading (write -> read), reject or document upgrading.
+
+### Design
+
+Core class: `SimpleReadWriteLock` with three counters on one monitor - readers (active), writer (0/1), writeRequests (queued writers). The third counter is the design decision: without it, a steady reader stream starves writers. Rules to state: downgrading (write -> read) is safe and supported; upgrading (read -> write) deadlocks with two contenders, so it is rejected and the caller must release-then-acquire. Fairness is reader-blocks-behind-queued-writer, same policy as ReentrantReadWriteLock's fair mode.
+
+### Key design decisions
+1. Single monitor with counters: `readers`, `writer`, `writeRequests` (the third counter prevents writer starvation - new readers queue behind waiting writers).
+2. Downgrade (write -> read) is safe: hold write, acquire read, release write. Upgrade (read -> write) deadlocks if two threads try it - say so.
+3. This is exactly `ReentrantReadWriteLock` internals - name the mapping.
+
+### Code
+
+```java
+class SimpleReadWriteLock {
+    private int readers = 0;
+    private int writers = 0;
+    private int writeRequests = 0;   // queued writers -> block new readers (fairness)
+
+    public synchronized void lockRead() throws InterruptedException {
+        while (writers > 0 || writeRequests > 0) wait();   // readers queue behind waiting writers
+        readers++;
+    }
+
+    public synchronized void unlockRead() {
+        readers--;
+        if (readers == 0) notifyAll();
+    }
+
+    public synchronized void lockWrite() throws InterruptedException {
+        writeRequests++;
+        try {
+            while (readers > 0 || writers > 0) wait();
+            writers = 1;
+        } finally { writeRequests--; }
+    }
+
+    public synchronized void unlockWrite() {
+        writers = 0;
+        notifyAll();
+    }
+
+    /** Downgrade pattern: hold write, grab read, release write. Safe. */
+    void downgrade() throws InterruptedException { lockRead(); unlockWrite(); }
+
+    /** Upgrade: NOT supported - two threads upgrading simultaneously deadlock.
+        Workaround: release read, acquire write, re-verify state. */
+}
+```
+
+**Key talking points**: without `writeRequests`, a writer could starve under a reader stream; downgrading is safe because the thread already holds exclusive access; upgrading deadlock is the classic follow-up trap; `StampedLock` improves read throughput via optimistic reads (no lock at all when uncontended) at the cost of reentrancy.
 
 ---
 
