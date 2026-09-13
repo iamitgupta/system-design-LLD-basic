@@ -13,6 +13,7 @@
 - [Part 2](#part-2): PubSub (Design+Code), ATM (Design+Code), Hotel Management (Design+Code)
 - [Part 3](#part-3): Elevator (Design+Code), Digital Wallet (Design+Code) + Locking Mechanisms, Ride Booking (Design+Code), Music Streaming (Design+Code) + Streaming Protocols
 - Every topic opens with **Requirements (Actors / Functional / Non-Functional / Edge Cases)**; delivery script in the Universal Framework
+- [Part 0 - Foundations](#part-0---foundations): OOP pillars, SOLID, design-pattern catalog, UML/diagram drawing guides, multithreading, exception handling, Java essentials
 - [Part 4](#part-4---additional-interview-problems): 20 more problems (LRU Cache, Rate Limiter, Snake & Ladder, Tic-Tac-Toe, Splitwise, BookMyShow, Food Delivery, Library, URL Shortener, Stock Exchange, Zoom, Distributed Cache, Git, Singleton, Thread Pool, Blocking Queue, Producer-Consumer, Web Crawler, Immutable Class, Read-Write Lock)
 - [Appendices](#appendix-e--compile-notes--common-imports): E (compile notes), F (12-point self-review)
 
@@ -62,14 +63,322 @@ The 9 steps interviewers expect, in order. Do not skip Step 1; skipping it is th
 ## How your topic sections map to the 9 steps
 | Your notes | Step |
 |---|---|
-| `### Requirements` (FR / NFR / Edge cases) | 1 (edge cases also feed Step 7) |
-| `### Design` (core classes, ownership) | 2 + 4 |
-| Mermaid architecture / class / sequence diagrams | 3 + 4 + 8 |
-| `### Key design decisions` | 4 + 6 |
-| `### Requirements` edge-case bullets | 7 |
-| `### Code` (Java) | 5 + 9 |
+| `### Step 1: Clarify Requirements` (FR / NFR) | 1 |
+| `### Step 2: Core Entities and Relationships` | 2 |
+| `### Step 3: Interaction Flows` + mermaid diagrams | 3 + 8 |
+| `### Step 4: Class Structure and Layers` | 4 |
+| `### Step 5: Core Use Cases` | 5 |
+| `### Step 6: Design Decisions, Patterns and SOLID` | 6 |
+| `### Step 7: Edge Cases` | 7 |
+| `### Step 8: Package Structure and Class Diagram` | 8 |
+| `### Step 9: Code (Java)` | 9 |
 
 Parking Lot (sections 1-2) is rebuilt below as the reference exemplar of this structure; apply the same shape to any topic in Parts 2-4 when asked to do a full round.
+
+---
+# PART 0 - FOUNDATIONS
+
+> Everything an interviewer assumes you know before any system design. Each section ends with how the topic shows up in the 46 problems.
+
+---
+
+## F1. OOP - The Four Pillars
+
+### Abstraction
+Expose what an object does, hide how. In Java: interfaces and abstract classes.
+
+```java
+interface PaymentGateway { boolean charge(double amount); }   // what
+class StripeGateway implements PaymentGateway {                  // how
+    public boolean charge(double amount) { /* Stripe API */ return true; }
+}
+```
+Interview line: "Callers depend on the interface, so the implementation can change or be mocked in tests."
+
+### Encapsulation
+Bundle data with behavior, restrict direct field access. Never expose mutable state; no public setters for lifecycle fields (status, balance).
+
+```java
+class Account {
+    private BigDecimal balance;                       // hidden
+    public void debit(BigDecimal amt) {               // behavior is the only door
+        if (balance.compareTo(amt) < 0) throw new IllegalStateException("insufficient");
+        balance = balance.subtract(amt);
+    }
+}
+```
+Interview line: "The invariant (no overdraft) lives in one place because the field is private."
+
+### Inheritance ("is-a") vs Composition ("has-a")
+Prefer composition. Inheritance breaks encapsulation (subclass depends on parent's internals), locks you into a hierarchy, and is only right for true is-a relationships with a stable base.
+
+```java
+// Bad: Stack extends ArrayList - is a Stack really an ArrayList? No.
+// Good:
+class Stack<T> {
+    private final List<T> items = new ArrayList<>();  // has-a
+    public void push(T t) { items.add(t); }
+    public T pop() { return items.remove(items.size() - 1); }
+}
+```
+The one acceptable inheritance in these notes: `Expense -> EqualExpense/ExactExpense/PercentExpense`, because split behavior IS the type.
+
+### Polymorphism
+Same call, different behavior. Compile-time (overloading) vs runtime (overriding). Runtime polymorphism is what makes Strategy/State work - every `strategy.compute(...)` call in this book is polymorphism doing its job.
+
+### Abstract class vs Interface (memorize the table)
+
+| | Interface | Abstract class |
+|---|---|---|
+| Fields | public static final only | any instance state |
+| Methods | abstract + default/static (Java 8+) | abstract + concrete |
+| Multiple inheritance | yes | no |
+| Use when | a capability ("can pay", "can append") | a family with shared state ("is a shape") |
+
+Java 8+ blurs the line: default methods let interfaces evolve; pick interfaces for capabilities, abstract classes for shared implementation + state.
+
+### The questions that always follow
+- **Composition vs inheritance?** Composition - say it before being asked.
+- **Why favor immutability?** Thread-safe, cacheable, safe to share. (Full treatment in section 45.)
+- **equals/hashCode contract?** Equal objects must have equal hash codes; override both or neither; use in HashMap/HashSet keys consistently. Break it and your HashMap "loses" objects.
+
+---
+
+## F2. SOLID - Principle by Principle
+
+| Principle | Rule | Violation looks like | Fix |
+|---|---|---|---|
+| **S**RP | One class, one reason to change | `OrderService` that also emails, logs, and prints | Split into OrderService, NotificationService, ReportService |
+| **O**CP | Open for extension, closed for modification | `if (type == CARD) ... else if (type == CASH)` chains | Strategy: new behavior = new class |
+| **L**SP | Subtypes must be substitutable for their base | `Square extends Rectangle` breaks setWidth semantics | Redesign hierarchy; favor composition |
+| **I**SP | Many specific interfaces over one fat interface | `Worker` with `work()` + `eat()` - a robot must "eat" | `Workable`, `Eatable` separately |
+| **D**IP | Depend on abstractions, not concretions | Service news-up a `new MySqlRepo()` | Inject `Repository` interface; wire at the edge |
+
+```java
+// OCP + DIP in one snippet - the pattern this whole book repeats
+interface FeeStrategy { double compute(long entry, long exit, VehicleType t); }
+class ParkingService {
+    private final FeeStrategy fees;                       // depends on abstraction
+    ParkingService(FeeStrategy fees) { this.fees = fees; } // injected
+    // new pricing rule? new FeeStrategy class. This file never changes.
+}
+```
+
+LSP deserves one concrete trap: the classic `Rectangle/Square`. A `Square` cannot honor `Rectangle.setWidth(w)` (it would change height too), so substituting a Square where Rectangle is expected breaks callers. Interview line: "If overriding a method weakens the contract or strengthens preconditions, LSP is broken - restructure."
+
+Where SOLID appears in this book: the Step 6 table of every topic maps decisions to principles; parking lot section 1 has the reference table.
+
+---
+
+## F3. Design Patterns - The Working Catalog
+
+You need ~12 patterns cold; you need to recognize the rest. Format: name - problem it solves - where it appears in this book.
+
+### Creational (how objects are made)
+| Pattern | Solves | In this book |
+|---|---|---|
+| **Singleton** | exactly one instance | ParkingLot controller, LogManager - section 40 |
+| **Factory** | hide creation logic | VehicleFactory, Logger creation |
+| **Abstract Factory** | families of related objects | (mention for UI toolkits, JDBC ConnectionFactory) |
+| **Builder** | step-by-step construction of complex objects | `HttpRequest`, `Pizza`; great for objects with many optional fields |
+| **Prototype** | clone instead of rebuild | rare in interviews; mention clone/copy constructors |
+
+Builder snippet (know it cold):
+```java
+HttpRequest req = new HttpRequest.Builder()
+    .url("...").method("POST").header("Auth", "...").body(json).build();
+```
+
+### Structural (how classes compose)
+| Pattern | Solves | In this book |
+|---|---|---|
+| **Adapter** | bridge incompatible interfaces | PaymentGatewayAdapter -> Razorpay/Stripe (parking lot) |
+| **Decorator** | add behavior without subclassing | coffee-shop example; Java IO (`BufferedReader` wraps `Reader`) |
+| **Facade** | one simple entry over a complex subsystem | `ElevatorController` hides the fleet |
+| **Proxy** | controlled access (lazy, remote, protection) | `BankService` stands in for the real bank at the ATM |
+| **Composite** | treat tree and leaf uniformly | file/folder; album/track collections |
+| **Flyweight** | share objects to save memory | intrinsic vs extrinsic state; thread pools of Strings |
+
+### Behavioral (how objects interact)
+| Pattern | Solves | In this book |
+|---|---|---|
+| **Strategy** | interchangeable algorithms | fee calc, dispatch, pricing, fare - everywhere |
+| **State** | behavior changes with lifecycle | vending machine, traffic signal, elevator, booking |
+| **Observer** | one-to-many notification | display board, task listeners, logging |
+| **Command** | encapsulate requests (queue/undo/log) | ATM transactions |
+| **Chain of Responsibility** | pass along handlers | ATM denomination chain, logging filters |
+| **Template Method** | skeleton fixed, steps vary | Expense base class validation |
+| **Iterator** | traverse without exposing internals | playlist playback, consumer offset cursor |
+| **Mediator** | reduce object-to-object coupling | (traffic controller as mediator variant) |
+| **Memento** | snapshot/restore state | (editor undo; Git is memento-like) |
+
+Interview rule: name the pattern AND the problem it solves in one sentence. "State - behavior changes with lifecycle, so each state owns its transitions." A pattern name without a justification is a negative signal.
+
+---
+
+## F4. UML and Diagrams - How to Draw Each One
+
+Four diagrams cover 95% of LLD interviews. Steps to draw each, then the Mermaid equivalent (this book's diagrams), then whiteboard tips.
+
+### Class diagram (the default)
+1. Box per class: name / fields / methods.
+2. Relationships: solid line = association (has-a), hollow triangle = inheritance (is-a), dashed hollow triangle = implements, diamond = composition (filled) or aggregation (hollow).
+3. Multiplicity only when it matters: `1..*`, `0..1`.
+4. Mark interfaces `<<interface>>`; mark enums with their values.
+5. Add only the 3-5 classes of the current flow - not the whole system.
+
+```mermaid
+classDiagram
+    class PaymentGateway {
+        <<interface>>
+        +charge(amount) boolean
+    }
+    class StripeGateway
+    PaymentGateway <|.. StripeGateway
+    class PaymentService {
+        -gateway: PaymentGateway
+    }
+    PaymentService --> PaymentGateway
+```
+Whiteboard tip: draw the flow's classes left to right in call order; it doubles as your sequence plan.
+
+### Sequence diagram (for the hardest flow)
+1. Lifelines top to bottom: actor, controller, service(s), repository, external system.
+2. One arrow per call, label with `method(args)`.
+3. Return arrows dashed, label only when the value matters.
+4. `alt/else` blocks for branches (payment approved/declined), `loop` for retries.
+5. Notes for invariants ("debit BEFORE dispense").
+
+```mermaid
+sequenceDiagram
+    actor U as User
+    participant C as ExitController
+    participant P as PaymentService
+    U->>C: exit(ticket)
+    C->>P: charge(fee)
+    alt approved
+        P-->>C: true
+    else declined
+        P-->>C: false
+    end
+```
+
+### State diagram (for lifecycle objects)
+1. Rounded states, one initial (`[*]`), finals where useful.
+2. Arrows labeled `event [guard] / action`.
+3. Write the invariant as a note - this is what interviewers score.
+
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE
+    IDLE --> HAS_MONEY : insertMoney
+    HAS_MONEY --> DISPENSING : selectItem [funds OK]
+    DISPENSING --> IDLE : dispense
+```
+
+### Activity diagram (rarely needed)
+Flowchart with decision diamonds - use for a multi-actor process (order refund flow). In Mermaid: `flowchart TD` with `{decision}` nodes.
+
+### Which diagram when (30-second chooser)
+| Situation | Draw |
+|---|---|
+| "Show me the design" | Class diagram |
+| "Walk me through the flow" | Sequence diagram |
+| Object with states (order, ticket, signal) | State diagram |
+| Multi-step business process | Activity / flowchart |
+
+---
+
+## F5. Multithreading and Concurrency - The Concepts
+
+### The vocabulary (define these crisply)
+- **Race condition**: outcome depends on timing of unsynchronized accesses. Fix: make the critical section atomic.
+- **Critical section**: code touching shared state; guard it.
+- **Thread-safe**: correct under any thread interleaving.
+- **Atomicity / visibility / ordering**: the three things that break. `synchronized` gives all three; `volatile` gives visibility + ordering only.
+
+### The Java toolkit (ranked by what to reach for)
+
+| Tool | Gives | Use when |
+|---|---|---|
+| `synchronized` | mutual exclusion + happens-before | simple guarding |
+| `ReentrantLock` | same + tryLock/timeout/fairness | need lock polling, interrupts |
+| `ReadWriteLock` / `StampedLock` | parallel reads, exclusive writes | read-heavy state |
+| Atomics + CAS | lock-free updates | counters, flags, single refs |
+| `ConcurrentHashMap` / `CopyOnWriteArrayList` | thread-safe collections | shared maps, read-mostly lists |
+| `BlockingQueue` | producer-consumer handoff | any work queue |
+| `volatile` | visibility | flags, `shutdown = true` |
+
+### volatile - the one-keyword trap
+`volatile int x` guarantees every thread sees the latest x, but `x++` is still read-modify-write and races. `volatile` + compound action = still broken; use AtomicInteger or synchronized. And without volatile, a thread may cache a stale value forever (JIT hoisting).
+
+### CAS and the ABA problem
+`compareAndSet(expect, update)` succeeds only if the value is still `expect`. ABA: value goes A -> B -> A; CAS succeeds though the object changed twice. Fix when it matters: `AtomicStampedReference` (version counter). In practice, ABA rarely bites on primitives - mention it and move on.
+
+### Deadlock - conditions and the practical fix
+Four Coffman conditions (mutual exclusion, hold-and-wait, no preemption, circular wait). Break circular wait: **always acquire locks in the same global order** (section 19 does this for wallet transfers). Also: use `tryLock` with timeout instead of blocking forever, and prefer one lock over two.
+
+### Thread lifecycle
+NEW -> RUNNABLE <-> BLOCKED/WAITING/TIMED_WAITING -> TERMINATED. `wait()` releases the monitor; `sleep()` does not. `wait/notify` must be inside synchronized on the same monitor, in a `while` loop (spurious wakeups).
+
+### Producer-consumer, thread pools, blocking queues
+One idea, three levels: `wait/notify` handoff -> `BlockingQueue` -> `ExecutorService` (section 41-43). In an interview, name the level you are implementing and why.
+
+### Java Memory Model in one breath
+"JMM defines happens-before: actions before a monitor unlock are visible after a subsequent lock on the same monitor; the same for volatile writes/reads, thread start/join, and thread-pool submit/take. If your synchronization establishes happens-before, your shared state is safe."
+
+---
+
+## F6. Exception and Error Handling
+
+### Checked vs unchecked vs errors
+
+| Kind | Extends | Examples | Rule |
+|---|---|---|---|
+| Checked | Exception | IOException, SQLException | caller must handle or declare - recoverable conditions |
+| Unchecked | RuntimeException | IllegalArgumentException, IllegalStateException, NPE | programming bugs - do not catch broadly |
+| Error | Error | OutOfMemoryError, StackOverflowError | JVM-level; never catch |
+
+Custom exceptions: `class PaymentDeclinedException extends RuntimeException` - carry context (amount, reason code), not just a message.
+
+### The LLD-level strategy (what interviewers actually score)
+1. **Validate at the boundary**, fail fast with domain exceptions: `IllegalStateException("Cannot start from " + status)`.
+2. **Exceptions for exceptional, Results for expected outcomes.** Payment declined is a business outcome - return `ExitResult(success=false, ...)`, not an exception. Exceptions are for broken assumptions (null ticket, corrupt state).
+3. **Never swallow**: at minimum log + rethrow or translate. Empty catch blocks are an auto-ding.
+4. **try-with-resources** for anything Closeable (appenders, connections, files):
+```java
+try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(path))) {
+    w.println(line);
+} // auto-close, exceptions suppressed properly
+```
+5. **Chain causes**: `throw new ServiceException("exit failed", cause)` - preserve the root cause.
+6. **Retry with backoff for transient failures** (payment gateway, network), bounded (section 1's `processPaymentWithRetry`), and only for idempotent operations or with an idempotency key.
+7. **Circuit breaker** for cascading external failures (gateway down -> fail fast instead of burning threads in retries). Name it; implementing it is an HLD-level follow-up.
+
+### The defensive patterns used throughout this book
+- Guard clauses before mutation (every state transition checks preconditions).
+- Null-safety by construction: enums instead of null status, `Optional` for may-absent lookups, sentinel nodes in the LRU list.
+- Fail-safe defaults: traffic controller fails to all-red, vending machine returns coins on unknown state.
+
+---
+
+## F7. Java Essentials for LLD Rounds
+
+| Feature | What to know |
+|---|---|
+| Records | immutable data carriers; `record Money(BigDecimal amount)`; shallow immutability caveat (section 45) |
+| Optional | return type for may-absent lookups; never as a field, never `Optional.get()` without check |
+| Streams | for transformations, not side effects; parallel streams only for CPU-heavy, stateless work |
+| Lambdas / functional interfaces | `Function`, `Supplier`, `Predicate` - strategy objects in one line |
+| Sealed classes | `sealed class Transaction permits Withdrawal, Deposit` - exhaustive switches, closed hierarchies |
+| switch expressions | exhaustive, yield values - used everywhere in this book |
+| Generics | `<T extends Comparable<? super T>>` wildcards: PECS (Producer Extends, Consumer Super) |
+
+Two contracts to recite: `equals/hashCode` (F1) and `Comparable/Comparator` (natural order vs custom).
+
+---
+
+*Foundations feed every topic: OOP/SOLID -> Step 6 tables, patterns -> Step 6 decisions, UML -> Steps 2-4 and 8, concurrency -> every atomic claim and lock in Part 3-4, exception strategy -> Step 7 tables.*
 
 ---
 # PART 1
@@ -124,7 +433,7 @@ sequenceDiagram
     EC-->>D: EntryResult(success, ticketId)
 ```
 
-### Step 4: Class Structures and Relationships (layered)
+### Step 4: Class Structure and Layers
 
 Client -> Controller -> Service -> Repository -> Domain, with an `adapter` package for payment gateways.
 
@@ -213,7 +522,7 @@ flowchart LR
 | Slot state mismatch | Reconciliation job: sweep occupied slots with no active ticket |
 | Double entry (same plate) | Reject: one active ticket per plate |
 
-### Step 8: Package Structure
+### Step 8: Package Structure and Class Diagram
 
 ```
 com.parkinglot
@@ -228,6 +537,8 @@ com.parkinglot
 ---
 
 ## 2. Parking Lot - Code
+
+### Step 9: Code (Java)
 
 ```java
 // ============================ domain ============================
@@ -411,7 +722,7 @@ class ExitController {
 ---
 ## 3. Logging Framework - Design
 
-### Requirements
+### Step 1: Clarify Requirements
 
 **Actors:** Application threads (producers), Ops/Admin (config), Log consumers (files, Kafka, dashboards).
 
@@ -427,15 +738,19 @@ class ExitController {
 - NFR-2: Bounded memory regardless of downstream slowness (queue cap + drop policy).
 - NFR-3: Throughput: 100k+ records/sec on one node (async pipeline).
 
-**Key Edge Cases**
-- Queue full → drop with counter (or block/oldest-drop per policy); never OOM.
-- Exception attached → stack trace captured at call site (throwable reference), rendered by layout.
-- Thread pool reuse → MDC must be snapshotted at capture, not read at write time.
-- Rollover mid-write → single-writer thread makes rollover atomic for readers.
-- Config reload at runtime → no restart, no lost records.
+*Edge-case strategies: table in Step 7 below.*
 
----
+### Step 3: Interaction Flows
 
+App thread calls logger.info() -> level check -> LogRecord built with MDC snapshot -> offered to the bounded queue (non-blocking) -> worker takes, runs filter chain, formats, appends.
+
+### Step 4: Class Structure and Layers
+
+A framework, not an app: Logger/LogManager form the client-facing entry, Appender is the SPI (console/file/async) with per-appender Layout and filters. No controllers or repositories.
+
+### Step 5: Core Use Cases
+
+log(): Logger -> filters -> AsyncAppender.offer -> worker -> delegate append. close(): shutdown flag -> interrupt -> drain -> close appenders.
 
 ### Architecture
 
@@ -457,7 +772,7 @@ flowchart LR
  A3 --> LY["Layout: Pattern"]
 ```
 
-### Class diagram
+### Step 2: Core Entities and Relationships (Class diagram)
 
 ```mermaid
 classDiagram
@@ -535,7 +850,7 @@ sequenceDiagram
  C->>C: layout.format → System.out
 ```
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 
 1. **Level check BEFORE object allocation** - the hot path must allocate nothing on disabled levels. (Modern JVMs scalar-replace anyway, but the intent matters.)
 2. **Immutability end-to-end**: `LogRecord` is a Java `record`; passed across the queue without defensive copies.
@@ -543,6 +858,20 @@ sequenceDiagram
 4. **Appender chain ordering**: layout/filter per appender (console wants color, file wants ISO timestamps) - don't share mutable formatters across appenders.
 5. **Rolling file appender**: size-based (`>100MB`) or time-based (daily); rollover must be atomic w.r.t. writers → single-writer thread guarantees this.
 6. **MDC (Mapped Diagnostic Context)**: `ThreadLocal<Map<String,String>>` carrying request-id/user-id; copied into record at capture time (never read later - thread reuse!). Mentioning MDC is a strong signal.
+
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
+### Step 7: Edge Cases
+
+- Queue full → drop with counter (or block/oldest-drop per policy); never OOM.
+- Exception attached → stack trace captured at call site (throwable reference), rendered by layout.
+- Thread pool reuse → MDC must be snapshotted at capture, not read at write time.
+- Rollover mid-write → single-writer thread makes rollover atomic for readers.
+- Config reload at runtime → no restart, no lost records.
+
+---
 
 ### Follow-up deep-dives
 - *How does log4j2 get 10x throughput?* - LMAX Disruptor ring buffer: lock-free, cache-line padded, single consumer; sequence counters instead of locks.
@@ -552,6 +881,8 @@ sequenceDiagram
 ---
 
 ## 4. Logging Framework - Code
+
+### Step 9: Code (Java)
 
 ```java
 enum Level { TRACE(0), DEBUG(1), INFO(2), WARN(3), ERROR(4), FATAL(5);
@@ -718,7 +1049,7 @@ final class LogManager {
 
 ## 5. Traffic Signal System - Design
 
-### Requirements
+### Step 1: Clarify Requirements
 
 **Actors:** Vehicles (implicit), Pedestrians, Traffic Authority (timing config), Emergency services (preemption).
 
@@ -733,14 +1064,19 @@ final class LogManager {
 - NFR-1: Safety-critical correctness: the mutual-exclusion invariant must hold under any sequence of faults.
 - NFR-2: Deterministic timing (real-time); recovery to a known-safe state after restart (fail-safe = all-red flashing).
 
-**Key Edge Cases**
-- Power loss mid-phase → fail-safe all-red; on reboot, resume from persisted phase or restart cycle.
-- Preemption arrives during yellow → finish transition to all-red, then serve preemption (never green directly from green).
-- Sensor fault (stuck "queue detected") → clamp/degrade to fixed timing; watchdog.
-- Two emergency requests conflict → priority order (fire > ambulance > police) or first-expiry-first; authority decides.
+*Edge-case strategies: table in Step 7 below.*
 
----
+### Step 3: Interaction Flows
 
+Scheduler advances the phase: all-red -> green(current) -> [green duration] -> yellow -> [3s] -> red -> all-red buffer -> next direction. Preemption checked before every green grant.
+
+### Step 4: Class Structure and Layers
+
+TrafficController is the single state writer; TrafficSignal holds State objects; TimingPolicy supplies durations. Readers get immutable snapshots. No repositories.
+
+### Step 5: Core Use Cases
+
+start()/advancePhase(): controller -> signal.transition(). preempt(): command queued, applied at next transition. snapshotAll(): read-only views.
 
 ### The safety invariants (state these FIRST - this is what separates seniors)
 
@@ -772,7 +1108,7 @@ stateDiagram-v2
  end note
 ```
 
-### Class diagram
+### Step 2: Core Entities and Relationships (Class diagram)
 
 ```mermaid
 classDiagram
@@ -815,7 +1151,7 @@ classDiagram
  TimingPolicy <|.. AdaptiveTimingPolicy
 ```
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 
 1. **State pattern carries duration + successor** - controller never switches on enums; adding a state (e.g., flashing-amber maintenance mode) = new class, no if-chains.
 2. **Single-threaded scheduler owns all transitions** → no locks needed on state; signals expose immutable `SignalSnapshot` for read APIs (UI, traffic feed).
@@ -823,6 +1159,19 @@ classDiagram
 4. **Pedestrian signals** derive from the same phase: WALK during parallel green, clearance countdown ≥ yellow + all-red.
 5. **Emergency preemption**: `PreemptionRequest` interrupts the cycle: force all-red → green the emergency corridor → resume. Implemented as a command queue checked by the scheduler before each transition.
 6. **Crash recovery**: controller persists `{phase, state, elapsed}` every transition (small WAL); restart replays to resume mid-cycle.
+
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
+### Step 7: Edge Cases
+
+- Power loss mid-phase → fail-safe all-red; on reboot, resume from persisted phase or restart cycle.
+- Preemption arrives during yellow → finish transition to all-red, then serve preemption (never green directly from green).
+- Sensor fault (stuck "queue detected") → clamp/degrade to fixed timing; watchdog.
+- Two emergency requests conflict → priority order (fire > ambulance > police) or first-expiry-first; authority decides.
+
+---
 
 ### Follow-up deep-dives
 - *Multi-junction coordination (green wave)*: a `CorridorController` offsets phase clocks of adjacent junctions along an arterial; mathematically it's a cyclic scheduling problem.
@@ -832,6 +1181,8 @@ classDiagram
 ---
 
 ## 6. Traffic Signal System - Code
+
+### Step 9: Code (Java)
 
 ```java
 enum Direction { NORTH, SOUTH, EAST, WEST }
@@ -993,7 +1344,7 @@ class TrafficController {
 
 ## 7. Vending Machine - Design
 
-### Requirements
+### Step 1: Clarify Requirements
 
 **Actors:** Customer, Operator (restock, price, collect cash), (extendable) Card network.
 
@@ -1008,14 +1359,19 @@ class TrafficController {
 - NFR-1: Every money movement is exact (integer cents or BigDecimal); inventory decrement atomic.
 - NFR-2: Illegal operations in a state must be impossible by construction (not error-handled at runtime).
 
-**Key Edge Cases**
-- Race: last item taken between selection and dispense → refund and abort.
-- Power loss mid-transaction → on restart, refund balance or complete pending dispense per persisted state.
-- Coin jam / invalid coin → rejected at insertion, not counted.
-- Machine has balance but all items sold out → refund path.
+*Edge-case strategies: table in Step 7 below.*
 
----
+### Step 3: Interaction Flows
 
+insertMoney accumulates balance (HasMoneyState) -> selectItem validates stock, funds, change feasibility -> DispenseState takes item, collects money, returns change -> Idle or SoldOut.
+
+### Step 4: Class Structure and Layers
+
+VendingMachine context delegates to VendingMachineState implementations; Inventory and ChangeCalculator strategy are collaborators. Public API is a thin delegate.
+
+### Step 5: Core Use Cases
+
+insertMoney/selectItem/cancel delegate to current state. dispense(): inventory.take + change in exactly one place.
 
 ### Full lifecycle state diagram
 
@@ -1070,7 +1426,7 @@ sequenceDiagram
  VM->>VM: transition Idle (or SoldOut if empty)
 ```
 
-### Class diagram
+### Step 2: Core Entities and Relationships (Class diagram)
 
 ```mermaid
 classDiagram
@@ -1112,7 +1468,7 @@ classDiagram
  VendingMachineState <|.. SoldOutState
 ```
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 
 1. **State pattern with default no-ops on the interface** = illegal operations are structurally impossible, not runtime-checked. Say this sentence in the interview.
 2. **Money as `int` cents** is acceptable for USD-like currencies (no fractions of a cent); otherwise use BigDecimal. Know both.
@@ -1123,7 +1479,22 @@ classDiagram
 
 ---
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
+### Step 7: Edge Cases
+
+- Race: last item taken between selection and dispense → refund and abort.
+- Power loss mid-transaction → on restart, refund balance or complete pending dispense per persisted state.
+- Coin jam / invalid coin → rejected at insertion, not counted.
+- Machine has balance but all items sold out → refund path.
+
+---
+
 ## 8. Vending Machine - Code
+
+### Step 9: Code (Java)
 
 ```java
 enum Coin { PENNY(1), NICKEL(5), DIME(10), QUARTER(25);
@@ -1281,7 +1652,7 @@ final class SoldOutState implements VendingMachineState {
 
 ## 9. Task Management System - Design
 
-### Requirements
+### Step 1: Clarify Requirements
 
 **Actors:** User (creator/assignee/viewer), Admin (permissions), System (scheduler, notifications).
 
@@ -1297,16 +1668,21 @@ final class SoldOutState implements VendingMachineState {
 - NFR-2: Filters composable without changing service code (open/closed).
 - NFR-3: Audit trail of who changed what, when (extendable).
 
-**Key Edge Cases**
-- Two users edit simultaneously → conflict error to the second; merge/retry UX.
-- Completing parent with open subtasks → rejected with reason.
-- Reassign mid-notification → no stale emails (events carry snapshot).
-- Overdue recurring task → next instance spawned from due date, not completion date.
+*Edge-case strategies: table in Step 7 below.*
 
----
+### Step 3: Interaction Flows
 
+create -> save -> notify listeners. assign -> version-checked save -> event fan-out. start/block/complete are guarded transitions. search composes Specification objects.
 
-### Domain model (DDD-flavored - mention "aggregate root" in the interview)
+### Step 4: Class Structure and Layers
+
+TaskService (application layer) depends on TaskRepository interface (in-memory now, database later); Task is the aggregate owning its lifecycle.
+
+### Step 5: Core Use Cases
+
+create(title) -> repo.save. assign(id,user) -> optimistic save -> listeners. search(spec) -> repo.findAll().stream().filter(spec).
+
+### Step 2: Core Entities and Relationships (Domain model (DDD-flavored - mention "aggregate root" in the interview))
 
 ```mermaid
 classDiagram
@@ -1397,7 +1773,7 @@ sequenceDiagram
  end
 ```
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 
 1. **Aggregate root + closure rule**: subtasks are reachable only via parent; complete() guards on subtasks - invariants live inside the aggregate, not the service ("domain model rich, application layer thin").
 2. **Optimistic concurrency**: `long version` on Task; `save` does `UPDATE ... WHERE id=? AND version=?` (or CAS in-memory). Two editors → one wins, loser gets conflict exception → retry or merge UI. Mention: never trust "last write wins" silently for task tools.
@@ -1408,7 +1784,22 @@ sequenceDiagram
 
 ---
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
+### Step 7: Edge Cases
+
+- Two users edit simultaneously → conflict error to the second; merge/retry UX.
+- Completing parent with open subtasks → rejected with reason.
+- Reassign mid-notification → no stale emails (events carry snapshot).
+- Overdue recurring task → next instance spawned from due date, not completion date.
+
+---
+
 ## 10. Task Management System - Code
+
+### Step 9: Code (Java)
 
 ```java
 enum TaskStatus { TODO, IN_PROGRESS, BLOCKED, DONE, CANCELLED }
@@ -1553,7 +1944,7 @@ class TaskService {
 
 ## 11. PubSub System - Design
 
-### Requirements
+### Step 1: Clarify Requirements
 
 **Actors:** Producers, Consumers (in groups), Platform Admin (topics, retention, ACLs).
 
@@ -1569,14 +1960,19 @@ class TaskService {
 - NFR-2: Producer never blocks unboundedly (bounded buffer + retry policy).
 - NFR-3: Consumer lag observable; slow consumer must not affect others.
 
-**Key Edge Cases**
-- Poison message → retries + backoff → DLQ after N attempts.
-- Consumer dies mid-batch → at-least-once redelivery → consumer must be idempotent.
-- All consumers in a group die → partitions idle, offsets retained, resume on restart.
-- Key skew (one hot key) → single hot partition; mitigation: salting (mention).
+*Edge-case strategies: table in Step 7 below.*
 
----
+### Step 3: Interaction Flows
 
+producer publishes -> partition routed by key -> single-writer append -> ack. Consumer pulls a batch -> processes idempotently -> commits offset. Replay = reset the offset.
+
+### Step 4: Class Structure and Layers
+
+Publisher -> Topic -> Partition (the append log IS storage, no repository). Consumer carries an offset cursor; ConsumerGroup assigns partitions to members.
+
+### Step 5: Core Use Cases
+
+publish(topic,msg): route -> append -> return offset. consumer loop: readFrom(offset) -> handle -> commit. join/leave triggers rebalance.
 
 ### Architecture (Kafka-flavored)
 
@@ -1642,7 +2038,7 @@ sequenceDiagram
 | At-least-once | retry until ack, commit AFTER processing | none | ✅ possible | cheap |
 | Exactly-once | idempotent producer (PID+seq) + transactions; consumer dedup | none | none (effectively) | expensive |
 
-### Class diagram (interview scope: in-memory)
+### Step 2: Core Entities and Relationships (Class diagram (interview scope: in-memory))
 
 ```mermaid
 classDiagram
@@ -1679,7 +2075,7 @@ classDiagram
  Consumer --> Partition : pulls
 ```
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 
 1. **Pull vs Push** (guaranteed question): **Pull** (Kafka) - consumer controls rate, enables batching & replay, natural backpressure (lag = debt). **Push** (classic broker) - low latency, but broker must handle slow consumers (need, queue per consumer, flow control). Know both; defend pull for throughput systems.
 2. **Partition = unit of ordering + parallelism**: per-key routing gives key-ordered streams; max consumer parallelism per group = partition count.
@@ -1690,7 +2086,22 @@ classDiagram
 
 ---
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
+### Step 7: Edge Cases
+
+- Poison message → retries + backoff → DLQ after N attempts.
+- Consumer dies mid-batch → at-least-once redelivery → consumer must be idempotent.
+- All consumers in a group die → partitions idle, offsets retained, resume on restart.
+- Key skew (one hot key) → single hot partition; mitigation: salting (mention).
+
+---
+
 ## 12. PubSub System - Code
+
+### Step 9: Code (Java)
 
 ```java
 record Message(String id, String key, byte[] payload, Instant timestamp) {
@@ -1809,7 +2220,7 @@ class ConsumerGroup {
 
 ## 13. ATM Machine - Design
 
-### Requirements
+### Step 1: Clarify Requirements
 
 **Actors:** Card holder, Bank (authoritative), Cash servicing agent, (extendable) deposit operations.
 
@@ -1825,14 +2236,19 @@ class ConsumerGroup {
 - NFR-2: Every transaction idempotent under network retry (idempotency key).
 - NFR-3: PIN never logged or stored in clear.
 
-**Key Edge Cases**
-- Dispenser jam after debit → auto-reversal via reconciliation job.
-- Timeout between debit and dispense → query by idempotency key; never re-debit.
-- ATM out of requested denomination mix → offer alternatives or decline cleanly.
-- Card retained while session active → force-eject + session close.
+*Edge-case strategies: table in Step 7 below.*
 
----
+### Step 3: Interaction Flows
 
+insertCard -> PIN auth (3 tries, then retain) -> select transaction -> bank debit -> dispense denominations -> receipt. Failure after debit triggers a compensating credit.
+
+### Step 4: Class Structure and Layers
+
+ATM session state machine delegates to BankService interface (remote proxy in production) and CashDispenser (handler chain). Transactions are command objects.
+
+### Step 5: Core Use Cases
+
+insertCard/enterPin/execute/eject delegate to ATMState. Withdrawal.execute(): bank.debit -> dispenser.dispense -> compensate on failure.
 
 ### State machine
 
@@ -1872,7 +2288,7 @@ flowchart LR
  style DONE fill:#cde
 ```
 
-### Class diagram
+### Step 2: Core Entities and Relationships (Class diagram)
 
 ```mermaid
 classDiagram
@@ -1944,7 +2360,7 @@ sequenceDiagram
  Note over A,D: If ATM jams AFTER debit: bank records pending dispense → auto-reversal job reconciles
 ```
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 
 1. **ATM is a thin client** - all balance truth lives at the bank. The ATM holds *no* account state. This boundary is the first thing to defend.
 2. **Order: authorize → debit → dispense → (failure → reversal)**. Dispensing before debit invites "free money on network outage". Reversal = compensating credit with same idempotency key.
@@ -1956,7 +2372,22 @@ sequenceDiagram
 
 ---
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
+### Step 7: Edge Cases
+
+- Dispenser jam after debit → auto-reversal via reconciliation job.
+- Timeout between debit and dispense → query by idempotency key; never re-debit.
+- ATM out of requested denomination mix → offer alternatives or decline cleanly.
+- Card retained while session active → force-eject + session close.
+
+---
+
 ## 14. ATM Machine - Code
+
+### Step 9: Code (Java)
 
 ```java
 enum Denomination { HUNDRED(100), FIFTY(50), TWENTY(20), TEN(10);
@@ -2130,7 +2561,7 @@ final class AuthenticatedState implements ATMState {
 
 ## 15. Hotel Management System - Design
 
-### Requirements
+### Step 1: Clarify Requirements
 
 **Actors:** Guest, Front desk agent, Housekeeping, Revenue manager (pricing), System (no-show job, payments).
 
@@ -2145,16 +2576,21 @@ final class AuthenticatedState implements ATMState {
 - NFR-1: The last room cannot be double-booked (atomic inventory claim).
 - NFR-2: Availability query fast (<200ms) at catalog scale via denormalized inventory.
 
-**Key Edge Cases**
-- Payment timeout after booking → TTL hold expires, inventory released.
-- No-show → charge first night per policy; room released for walk-ins.
-- Early check-in / late checkout → pricing rules apply.
-- Overbooking (allowed per policy) → walk-guest compensation flow.
+*Edge-case strategies: table in Step 7 below.*
 
----
+### Step 3: Interaction Flows
 
+search availability (type + date range) -> book claims inventory with payment hold TTL -> confirm. Check-in assigns a concrete room; check-out generates the invoice and moves the room to CLEANING.
 
-### Domain model
+### Step 4: Class Structure and Layers
+
+Hotel owns Rooms (housekeeping state machine); Booking is the aggregate; PricingStrategy and CancellationPolicy are injected; repositories sit behind the service.
+
+### Step 5: Core Use Cases
+
+book(): availability check + atomic claim. checkIn(room): assign. checkOut(extras): invoice + release. cancel(): tiered penalty via policy.
+
+### Step 2: Core Entities and Relationships (Domain model)
 
 ```mermaid
 classDiagram
@@ -2246,7 +2682,7 @@ sequenceDiagram
  H-->>G2: sorry, sold out
 ```
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 
 1. **Book type, assign room at check-in**: decouples inventory (count per type) from physical rooms → enables upgrades, maintenance swaps, overbooking control. Say this clearly - it's the hallmark design decision.
 2. **Inventory = capacity − overlapping confirmed bookings**: an **overlap predicate** on `DateRange` (half-open intervals) is the entire availability engine. In SQL: exclusion constraint `tstzrange &&` for correctness.
@@ -2257,7 +2693,22 @@ sequenceDiagram
 
 ---
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
+### Step 7: Edge Cases
+
+- Payment timeout after booking → TTL hold expires, inventory released.
+- No-show → charge first night per policy; room released for walk-ins.
+- Early check-in / late checkout → pricing rules apply.
+- Overbooking (allowed per policy) → walk-guest compensation flow.
+
+---
+
 ## 16. Hotel Management System - Code
+
+### Step 9: Code (Java)
 
 ```java
 enum RoomType { SINGLE, DOUBLE, DELUXE, SUITE }
@@ -2440,7 +2891,7 @@ record Money(BigDecimal amount) {
 
 ## 17. Elevator System - Design
 
-### Requirements
+### Step 1: Clarify Requirements
 
 **Actors:** Passengers (hall calls + car calls), Building operator (dispatch config, maintenance), Fire service (recall mode).
 
@@ -2456,14 +2907,19 @@ record Money(BigDecimal amount) {
 - NFR-2: Dispatch decision <50ms with a large fleet (geo/dispatch efficiency).
 - NFR-3: Deterministic behavior under concurrent calls (no two cars both commit to same optimal plan - acceptable race, but no safety issue).
 
-**Key Edge Cases**
-- Power failure mid-travel → brake to nearest floor, open doors, alarm.
-- Overload sensor → doors hold open, buzzer, request stays queued.
-- Fire alarm → recall all cars to ground floor, open doors, manual firefighter mode.
-- Passenger presses door-open while moving → ignored (interlock).
+*Edge-case strategies: table in Step 7 below.*
 
----
+### Step 3: Interaction Flows
 
+hall call -> dispatch strategy picks a car (canServe + ETA) -> stop added. Car main loop: nextStop via LOOK -> move -> dwell. Maintenance/fire modes remove cars from dispatch.
+
+### Step 4: Class Structure and Layers
+
+ElevatorController (registry + dispatch strategy) coordinates independent Elevator agents, one thread each, private stop sets; IDLE/MOVING/DOOR_OPEN/MAINTENANCE states.
+
+### Step 5: Core Use Cases
+
+requestHall(floor,dir): strategy.pick -> addStop. requestCar(elevator,floor): direct addStop. runLoop(): nextStop -> moveTo -> dwell.
 
 ### SCAN/LOOK algorithm walkthrough (draw this table in the interview)
 
@@ -2485,7 +2941,7 @@ LOOK variant: don't go to the extreme floor unless a stop exists there. Real ele
 | Estimated Time of Arrival (ETA) | predicted arrival incl. stops in between | destination-dispatch systems |
 | Round-robin | distribute load evenly | freight / predictable traffic |
 
-### Class diagram
+### Step 2: Core Entities and Relationships (Class diagram)
 
 ```mermaid
 classDiagram
@@ -2547,7 +3003,7 @@ sequenceDiagram
  Note over E1: main loop picks it up during UP sweep
 ```
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 
 1. **Two sorted stop sets** (`upStops` ascending, `downStops` descending) → next stop is always O(1) poll; SCAN/LOOK falls out naturally when a set empties (flip direction).
 2. **Direction-matching acceptance rule** (`canServe`): an UP car only picks UP calls at/above current floor; a DOWN car only DOWN calls at/below. This is why riders sometimes wait - it's the cost of throughput. Being able to articulate this trade-off is the point.
@@ -2557,7 +3013,22 @@ sequenceDiagram
 
 ---
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
+### Step 7: Edge Cases
+
+- Power failure mid-travel → brake to nearest floor, open doors, alarm.
+- Overload sensor → doors hold open, buzzer, request stays queued.
+- Fire alarm → recall all cars to ground floor, open doors, manual firefighter mode.
+- Passenger presses door-open while moving → ignored (interlock).
+
+---
+
 ## 18. Elevator System - Code
+
+### Step 9: Code (Java)
 
 ```java
 enum Direction { UP, DOWN, NONE }
@@ -2693,7 +3164,7 @@ class ElevatorController {
 
 ## 19. Digital Wallet - Design
 
-### Requirements
+### Step 1: Clarify Requirements
 
 **Actors:** Wallet owner, Counterparty (P2P), Bank/PSP (funding source), Compliance/Audit (read-only), System (reconciliation).
 
@@ -2709,14 +3180,19 @@ class ElevatorController {
 - NFR-2: Transfers idempotent under client retries (idempotency key).
 - NFR-3: Ledger append-only, auditable, reconcilable (derived balance == cached balance).
 
-**Key Edge Cases**
-- Concurrent opposite-direction transfers A→B and B→A → ordered locking prevents deadlock.
-- Insufficient funds → atomic reject, no partial state.
-- Crash after debit, before credit → PENDING sweeper auto-reverses.
-- Duplicate retry of the same transfer → idempotency store returns original result.
+*Edge-case strategies: table in Step 7 below.*
 
----
+### Step 3: Interaction Flows
 
+transfer with idempotency key -> ordered locking of both wallets -> debit sender -> credit receiver -> ledger posts both lines. Crash between debit and credit -> PENDING sweeper auto-reverses.
+
+### Step 4: Class Structure and Layers
+
+WalletService coordinates Wallet (per-user lock), append-only double-entry Ledger, IdempotencyStore. Cross-service variant: saga + outbox.
+
+### Step 5: Core Use Cases
+
+transfer(key,from,to,amt): idempotency check -> ordered locks -> debit/credit -> ledger.post. balance(): cached; ledgerBalance(): derived, for reconciliation.
 
 ### Architecture with ledger + outbox
 
@@ -2771,7 +3247,7 @@ sequenceDiagram
 2. Ledger is **append-only** - balances are *derived* (or cached with reconciliation), never updated in place without a corresponding entry.
 3. Sum of all wallet balances == sum of external settlement balances (reconciliation report).
 
-### Class diagram
+### Step 2: Core Entities and Relationships (Class diagram)
 
 ```mermaid
 classDiagram
@@ -2807,7 +3283,7 @@ classDiagram
  Ledger --> LedgerLine
 ```
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 
 1. **Saga pattern** for cross-service transfer: local tx (debit A + intent row) → message → local tx (credit B). Failure → compensating credit. The "outbox pattern" makes the event and the state change atomic (same DB transaction).
 2. **Ordered locking** (lock wallets in id order) prevents deadlock when transfers run in opposite directions concurrently.
@@ -2817,7 +3293,22 @@ classDiagram
 
 ---
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
+### Step 7: Edge Cases
+
+- Concurrent opposite-direction transfers A→B and B→A → ordered locking prevents deadlock.
+- Insufficient funds → atomic reject, no partial state.
+- Crash after debit, before credit → PENDING sweeper auto-reverses.
+- Duplicate retry of the same transfer → idempotency store returns original result.
+
+---
+
 ## 20. Types of Locking Mechanisms (Deep Dive)
+
+### Step 9: Code (Java)
 
 ### Decision flowchart
 
@@ -2977,7 +3468,7 @@ class WalletService {
 
 ## 22. Ride Booking App - Design
 
-### Requirements
+### Step 1: Clarify Requirements
 
 **Actors:** Rider, Driver, Pricing engine (surge), Payments, System (matching, fraud).
 
@@ -2993,14 +3484,19 @@ class WalletService {
 - NFR-2: Matching decision fast (<300ms) with 100k+ online drivers (geo-index).
 - NFR-3: Location updates high-throughput (separate stream from request path).
 
-**Key Edge Cases**
-- All nearby drivers decline → widen radius / raise surge / notify rider honestly.
-- Driver cancels en route → re-match rider with priority; penalize driver.
-- Rider no-show at pickup → driver cancels with fee to rider.
-- GPS drift at pickup → match within geofence radius, not exact point.
+*Edge-case strategies: table in Step 7 below.*
 
----
+### Step 3: Interaction Flows
 
+request -> surge locked -> geo-index nearest 5 -> sequential offers (15s each) -> CAS claim -> matched -> trip -> on end: fare + payment split + agent back to pool.
+
+### Step 4: Class Structure and Layers
+
+RideService coordinates DriverManager (geo-index), SurgeEngine, FareStrategy, payments; Driver and Ride are state machines; atomic claim is tryOffer().
+
+### Step 5: Core Use Cases
+
+requestRide(): multiplier -> findNearest -> offer loop. endTrip(): complete -> fare(lockedSurge) -> payment split -> agent available.
 
 ### System context
 
@@ -3057,7 +3553,7 @@ stateDiagram-v2
  AVAILABLE --> OFFLINE : goOffline
 ```
 
-### Class diagram
+### Step 2: Core Entities and Relationships (Class diagram)
 
 ```mermaid
 classDiagram
@@ -3097,7 +3593,7 @@ classDiagram
  Ride --> Driver
 ```
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 
 1. **Geo-index**: grid hash `cell = (int)(lat/cellKm) : (int)(lng/cellKm)` with neighbor-cell spiral search; production = Redis GEO / S2 / H3 / QuadTree. Know the names and why (Redis GEO = geohash-based sorted sets, radius queries O(log N)).
 2. **Sequential offer vs broadcast**: broadcast causes thundering herd + awkward multi-accept races; sequential with timeout degrades gracefully and feeds the surge signal. (Uber actually does batch/ETA-ranked matching - mention as the scaled-up evolution.)
@@ -3106,7 +3602,22 @@ classDiagram
 5. **Fare at trip end**: base + distance×rate + time×rate + tolls − promos, × surge locked at request time (riders hate post-hoc surge).
 6. **Trip events as stream**: REQUESTED/MATCHED/STARTED/COMPLETED/CANCELLED → Kafka → analytics, ETA ML, invoices. Event-driven from day one in your narrative.
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
+### Step 7: Edge Cases
+
+- All nearby drivers decline → widen radius / raise surge / notify rider honestly.
+- Driver cancels en route → re-match rider with priority; penalize driver.
+- Rider no-show at pickup → driver cancels with fee to rider.
+- GPS drift at pickup → match within geofence radius, not exact point.
+
+---
+
 ## 23. Ride Booking App - Code
+
+### Step 9: Code (Java)
 
 ```java
 record Location(double lat, double lng) {
@@ -3270,7 +3781,7 @@ record RideCompletedEvent(String rideId, Money fare) {}
 
 ## 24. Music Streaming Platform - Design
 
-### Requirements
+### Step 1: Clarify Requirements
 
 **Actors:** Listener, Artist/Label (content), Licensing/royalty system (read events), System (transcoding, CDN).
 
@@ -3286,13 +3797,21 @@ record RideCompletedEvent(String rideId, Money fare) {}
 - NFR-2: Streaming must not require server session state (dumb HTTP + cache).
 - NFR-3: Play-count accuracy for royalties (idempotent, auditable events).
 
-**Key Edge Cases**
-- Network drop mid-track → resume from last buffered segment with downswitch.
-- Seek beyond duration → clamp to last segment.
-- Concurrent playlist edits → version-based optimistic control.
-- Track removed by label mid-playlist → graceful skip + notice.
+*Edge-case strategies: table in Step 7 below.*
 
-### Playback data model (the streaming-specific part)
+### Step 3: Interaction Flows
+
+getStream returns a manifest (variants + segments) -> client fetches segments adaptively by throughput and buffer -> progress events. Seek maps timestamp to a segment index.
+
+### Step 4: Class Structure and Layers
+
+MusicCatalog for search; Track -> BitrateVariant -> AudioSegment (CDN references); Player holds cursors and play-order strategy; PlayEvent goes to an outbox for royalties.
+
+### Step 5: Core Use Cases
+
+getStream(trackId): resolve variants. playNext/seek/switchBitrate: move cursor, return segment references. PlayEvent -> broker.
+
+### Step 2: Core Entities and Relationships (Playback data model (the streaming-specific part))
 
 ```mermaid
 classDiagram
@@ -3352,7 +3871,7 @@ sequenceDiagram
  Note over U,CDN: seek = offsetMs → segment index → byte-range GET
 ```
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 
 1. **Segment references, never bytes**: Track/Variant/Segment are metadata; audio lives in object storage behind CDN. Model the manifest - that IS the domain model of streaming.
 2. **Seek = timestamp → segment index → (range) fetch**: `segmentAt()` does this mapping; clients buffer 1-2 segments ahead for gapless playback.
@@ -3360,6 +3879,17 @@ sequenceDiagram
 4. **Play-count & royalties**: `PlayEvent` stream (Kafka) → aggregation per track/artist/territory → royalty ledgers. This is a revenue system - idempotent play events (client-generated playId).
 5. **DRM**: license server + encrypted segments (AES-128 / Widevine / FairPlay); offline downloads = encrypted cached segments with expiring licenses.
 6. **Collaborative playlists**: versioning per edit (version vector or LWW with server sequence) - mention, don't over-engineer.
+
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
+### Step 7: Edge Cases
+
+- Network drop mid-track → resume from last buffered segment with downswitch.
+- Seek beyond duration → clamp to last segment.
+- Concurrent playlist edits → version-based optimistic control.
+- Track removed by label mid-playlist → graceful skip + notice.
 
 ### Follow-up deep-dives
 - *How does seek work mid-track?* → byte-range request / segment index from timestamp.
@@ -3369,6 +3899,8 @@ sequenceDiagram
 ---
 
 ## 25. Streaming Protocols (Deep Dive)
+
+### Step 9: Code (Java)
 
 ### Comparison matrix
 
@@ -3545,21 +4077,40 @@ class TrendingRecommendation implements RecommendationStrategy {
 
 ## 27. LRU Cache
 
-### Requirements
+### Step 1: Clarify Requirements
 - get(key) and put(key, value) in O(1); fixed capacity; on eviction remove least-recently-used.
 - Thread-safe under concurrent get/put (state assumption: single JVM first).
 - Edge cases: get of missing key; put of existing key updates value + recency; capacity=1.
 
-### Design
+### Step 3: Interaction Flows
+
+get/put -> hash map lookup -> move node to front -> evict from the tail when full.
+
+### Step 4: Class Structure and Layers
+
+Single class plus a private Node type; at this size explicit layering is overhead - note where it would split (cache API vs eviction policy).
+
+### Step 5: Core Use Cases
+
+get(k): map lookup + touch. put(k,v): update-in-place or evict-then-insert.
+
+### Step 2: Core Entities and Relationships
 
 Core classes: `LRUCache` (orchestrator, owns eviction + lookup), `Node` (doubly-linked entry: key, value, prev, next), `HashMap<K, Node>` (the index that makes lookup O(1)). Cache holds sentinels head/tail so insert/evict never hit null. Eviction policy is hardcoded here; if a second policy (LFU, TTL) appears, extract `EvictionPolicy<K>` and pass it in - until then, YAGNI.
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 1. **HashMap + doubly-linked list**: map gives O(1) lookup; list maintains usage order; sentinel head/tail nodes remove null-check corner cases.
 2. Every `get` is a write to the recency structure (move-to-front) - so even reads need mutation; a single `synchronized` on the cache is the simple correct answer; then discuss lock striping (ConcurrentHashMap of stripes) for scale.
 3. Follow-ups to volunteer: LFU (freq map + recency within freq), TTL expiry (lazy on access + sweeper), size-based eviction (weighted).
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
 ### Code
+
+
+### Step 9: Code (Java)
 
 ```java
 class LRUCache<K, V> {
@@ -3611,21 +4162,40 @@ class LRUCache<K, V> {
 
 ## 28. Rate Limiter
 
-### Requirements
+### Step 1: Clarify Requirements
 - Decide allow/deny per user/API key in O(1) per request; configurable limit (e.g., 100 req/min).
 - Smooth traffic (token bucket) vs strict window (sliding window) - both behind one interface.
 - Edge cases: burst at window boundary; clock skew across nodes (distributed case).
 
-### Design
+### Step 3: Interaction Flows
+
+allow(userId) -> find bucket -> lazy refill from elapsed time -> CAS decrement -> verdict.
+
+### Step 4: Class Structure and Layers
+
+RateLimiter interface with strategy implementations; per-user Bucket state in a ConcurrentHashMap.
+
+### Step 5: Core Use Cases
+
+allow(): computeIfAbsent bucket -> refill() -> tokens CAS loop.
+
+### Step 2: Core Entities and Relationships
 
 Core classes: `RateLimiter` (interface - the only thing callers see), `TokenBucketRateLimiter` / `SlidingWindowRateLimiter` (strategies), `Bucket` (per-user mutable state: tokens + lastRefill). A `Map<userId, Bucket>` lives inside each strategy; no shared state between strategies. The strategy choice is per-endpoint config, decided at startup and injected.
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 1. **Strategy interface**: token bucket (smooth, memory O(1)), sliding window log (exact, memory O(window)), sliding window counter (approximate, O(1)). Pick per endpoint.
 2. Lazy refill: don't run a timer per user - compute tokens-on-arrival from elapsed time.
 3. Distributed version: Redis + Lua script (atomic refill-check-decrement), because read-then-write races across instances.
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
 ### Code
+
+
+### Step 9: Code (Java)
 
 ```java
 interface RateLimiter { boolean allow(String userId); }
@@ -3693,20 +4263,39 @@ class SlidingWindowRateLimiter implements RateLimiter {
 
 ## 29. Snake & Ladder
 
-### Requirements
+### Step 1: Clarify Requirements
 - N players, standard board 100 cells, snakes (head>tail) and ladders (bottom<top), single six-sided die; turn-based; first to exactly 100 (or >= 100) wins.
 - Edge cases: snake head at cell with another snake? (usually not allowed - validate board); landing on ladder chains (validate or apply iteratively per rules); player at 94 rolling 6 -> bounce or stay (clarify!).
 
-### Design
+### Step 3: Interaction Flows
+
+playTurn -> roll dice -> advance -> applyJump (snake or ladder) -> win check -> pass turn.
+
+### Step 4: Class Structure and Layers
+
+Game orchestrates Board (jump map), Players, swappable Dice strategy.
+
+### Step 5: Core Use Cases
+
+playTurn(): roll -> move -> jump -> winner check -> rotate turn.
+
+### Step 2: Core Entities and Relationships
 
 Core classes: `Game` (orchestrates turns, owns win state), `Board` (jump map from->to for snakes and ladders, win check), `Player` (name + position), `Dice` (interface so the dice is swappable). Game -> Board, Game -> * Player, Game -> Dice. Everything except the turn loop is immutable-friendly - Board can be shared across games.
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 1. **Dice as Strategy** (normal/crooked loaded die) - classic interview hook.
 2. Board holds jump map (cell -> destination) for O(1) lookup; normal cells map to themselves.
 3. `Game.move()` handles one full turn: roll -> compute -> apply jump once -> check win; game loop in service.
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
 ### Code
+
+
+### Step 9: Code (Java)
 
 ```java
 interface Dice { int roll(); }
@@ -3760,20 +4349,39 @@ class Game {
 
 ## 30. Tic-Tac-Toe
 
-### Requirements
+### Step 1: Clarify Requirements
 - 3x3 board, 2 players (X and O), alternate turns, win = 3 in a row/col/diag; draw when full; invalid move rejected.
 - Edge cases: move on occupied cell; play after game over; NxN generalization.
 
-### Design
+### Step 3: Interaction Flows
+
+move(r,c) -> validate and place -> last-move win check -> full-board draw check -> switch turn.
+
+### Step 4: Class Structure and Layers
+
+Game guards turns and termination; Board owns the grid and win evaluation; Piece enum keeps nulls off the board.
+
+### Step 5: Core Use Cases
+
+move(): guards, place, evaluate, rotate current piece.
+
+### Step 2: Core Entities and Relationships
 
 Core classes: `Game` (turn order, game-over flag), `Board` (grid + last-move win check), `Piece` (enum: X, O, EMPTY - no nulls on the grid). Game -> Board. The win check lives in Board (it owns the grid); the turn/termination rules live in Game. Extending to Connect4 means a gravity-aware Board - Game doesn't change.
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 1. Win check after each move from the last placed piece only (row, col, 2 diagonals) - O(N) instead of rescanning the board.
 2. Piece as enum; no null checks on board - use Optional or EMPTY symbol.
 3. Game class enforces turn order and game-over state.
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
 ### Code
+
+
+### Step 9: Code (Java)
 
 ```java
 enum Piece { X, O, EMPTY }
@@ -3827,20 +4435,39 @@ class Game {
 
 ## 31. Splitwise
 
-### Requirements
+### Step 1: Clarify Requirements
 - Users add expenses in a group (or pairwise): amount + payer + splits (equal / exact / percent); show net balances; simplify debts to minimize transfers.
 - Edge cases: splits must sum to amount (validate); percent rounding (largest remainder); a user with zero net should not appear.
 
-### Design
+### Step 3: Interaction Flows
+
+addExpense -> subclass computes shares -> validate they sum to the total -> store -> balances derived; simplify matches largest creditor with largest debtor.
+
+### Step 4: Class Structure and Layers
+
+Expense hierarchy (Equal/Exact/Percent) with shared validation in the base; BalanceService derives nets and simplifies.
+
+### Step 5: Core Use Cases
+
+addExpense(): subtype shares -> validate. netBalances(): sum signed lines. simplify(): greedy matching.
+
+### Step 2: Core Entities and Relationships
 
 Core classes: `Expense` (abstract - holds payer, total, participants; declares `shares()`), `EqualExpense`, `ExactExpense`, `PercentExpense` (subclasses implement the split), `User`, `Group` (optional aggregate of expenses), `BalanceService` (derives net positions and simplifies debts). Pattern: polymorphism over split type with shared validation in the base - adding a "shares by ratio" expense is a new subclass, zero changes elsewhere.
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 1. **Expense type hierarchy**: abstract `Expense` with `abstract Map<User, Money> shares()`; Equal / Exact / Percent subclasses (Template-ish: shared validation in base).
 2. Store ledger lines per expense (double-entry style: payer credited, each participant debited) - balances are derived by summing.
 3. **Simplify debts** = graph problem: compute net per user, greedy match largest creditor with largest debtor (classic min-cash-flow greedy works well in practice; exact optimum is NP-hard - mention it).
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
 ### Code
+
+
+### Step 9: Code (Java)
 
 ```java
 record Money(BigDecimal amount) {
@@ -3911,20 +4538,39 @@ class BalanceService {
 
 ## 32. BookMyShow
 
-### Requirements
+### Step 1: Clarify Requirements
 - Cinemas have screens; screens run shows (movie + time); each show has seats; users hold seats (TTL) then pay to confirm; one seat sold exactly once.
 - Edge cases: two users hold the same seat (hold is exclusive or first-come); payment timeout releases hold; user cancels a confirmed booking (refund policy).
 
-### Design
+### Step 3: Interaction Flows
+
+hold seat (atomic claim with TTL) -> pay -> confirm. Sweeper releases expired holds back to AVAILABLE.
+
+### Step 4: Class Structure and Layers
+
+Show is the aggregate: seat map plus hold expiries; repositories behind the service; payment behind an adapter.
+
+### Step 5: Core Use Cases
+
+hold(): compute claim. confirm(): expiry check then BOOKED. releaseExpiredHolds(): sweeper reclaim.
+
+### Step 2: Core Entities and Relationships
 
 Core classes: `Show` (aggregate root: seatId -> SeatStatus map, hold expiries), `Movie`, `Screen`, `Seat` (physical, referenced by id), `Booking` (confirmed seat). Same architecture as Hotel inventory: holds are claims with TTL, sweeper reclaims, confirm converts hold to booking. The contention boundary is one show - two shows never block each other.
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 1. **Show is the aggregate**: seats live per show (same physical seat exists independently in each show). Contention boundary = one show's seat.
 2. **Hold with TTL** (like hotel inventory): `hold(seat)` returns a token valid 10 min; sweeper releases expired holds; confirm converts hold to booking; pay-then-confirm ordering.
 3. Concurrency: per-show lock OR per-seat `AtomicBoolean`/compare-and-set; at scale, the DB unique constraint (show_id, seat_id) in the booking table is the real guarantee.
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
 ### Code
+
+
+### Step 9: Code (Java)
 
 ```java
 enum SeatStatus { AVAILABLE, HELD, BOOKED }
@@ -3983,21 +4629,40 @@ class Show {
 
 ## 33. Food Delivery (Zomato-style)
 
-### Requirements
+### Step 1: Clarify Requirements
 - Customer browses restaurant menus, places order (items + quantities), pays; restaurant accepts/rejects; delivery agent assigned; order delivered; ratings.
 - Edge cases: item unavailable after order placed (refund line item); restaurant rejects (auto-refund); no delivery agent (retry / expand radius, same as ride matching); order cancellation window.
 
-### Design
+### Step 3: Interaction Flows
+
+place order (menu-version snapshot) -> payment authorized -> restaurant accepts -> prep states -> agent matched -> delivered -> payment captured; rejection or timeout auto-releases.
+
+### Step 4: Class Structure and Layers
+
+Order is the aggregate state machine; Restaurant/MenuItem for catalog; agent matching reuses the ride-booking atomic claim; payments mirror the order lifecycle.
+
+### Step 5: Core Use Cases
+
+accept()/advance()/reject(): guarded transitions. assignAgent(): allowed from PREPARING/READY_FOR_PICKUP.
+
+### Step 2: Core Entities and Relationships
 
 Core classes: `Order` (aggregate root + state machine), `Customer`, `Restaurant` (menu + prep time), `MenuItem`, `DeliveryAgent`, `Payment` (lifecycle mirrors the order). Last-leg agent matching reuses the ride-booking design: geo-index of available agents + atomic claim. The service layer is thin; every invariant (can only advance from ACCEPTED, etc.) lives inside Order.
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 1. **Order is an aggregate with a state machine**: PLACED -> ACCEPTED -> PREPARING -> READY_FOR_PICKUP -> PICKED_UP -> DELIVERED (+ REJECTED / CANCELLED). Every transition guards its precondition.
 2. **Reuse the ride-matching machinery** for the last leg (nearest available agent); prep time from restaurant feeds ETA.
 3. Pricing as strategy; restaurant menu cached but order validates against live menu version (price change race - accept the version at order time).
 4. Payments: hold at PLACED, capture at ACCEPTED, auto-release on REJECTED/CANCEL timeout (payment state machine mirroring order state machine).
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
 ### Code
+
+
+### Step 9: Code (Java)
 
 ```java
 enum OrderStatus { PLACED, ACCEPTED, PREPARING, READY_FOR_PICKUP, PICKED_UP, DELIVERED, REJECTED, CANCELLED }
@@ -4041,20 +4706,39 @@ class Order {
 
 ## 34. Library Management
 
-### Requirements
+### Step 1: Clarify Requirements
 - Catalog of books with multiple copies; members borrow/return; due date + fine; reserve a book that's fully checked out; librarian manages catalog.
 - Edge cases: return overdue (fine calc); reserving member gets priority when copy returns; member with unpaid fines blocked from new loans (policy).
 
-### Design
+### Step 3: Interaction Flows
+
+issue a Copy -> due date -> return -> fine from the policy -> reservation queue for the Title drained, first reserver notified.
+
+### Step 4: Class Structure and Layers
+
+Title vs Copy split (reserve the title, loan the copy); Loan carries dates; FinePolicy is a strategy; reservation queue is an Observer consumer.
+
+### Step 5: Core Use Cases
+
+issue()/return(): copy state transitions. fine(policy): computed on late return.
+
+### Step 2: Core Entities and Relationships
 
 Core classes: `Title` (what gets reserved), `Copy` (what gets loaned - barcode, current loan), `Member`, `Loan` (issue/due/return dates, fine calc), `FinePolicy` (interface), `Reservation` (queue per title). Mirrors Hotel's type-vs-concrete split: reservations queue on Title, loans attach to Copy. Return flow: Copy -> available -> drain reservation queue -> notify first reserver (Observer).
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 1. **Title vs Copy** (same book-type vs concrete-room idea): Loan is against a Copy; reservation is against a Title.
 2. Return workflow: copy -> available -> check reservation queue for that title -> auto-assign to first reserver (notify, 48h pickup window).
 3. Fine as policy object (per-day rate, grace days, cap) - strategy.
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
 ### Code
+
+
+### Step 9: Code (Java)
 
 ```java
 class Title { private final String isbn; private final String name; }
@@ -4099,20 +4783,39 @@ class PerDayFine implements FinePolicy {
 
 ## 35. URL Shortener (LLD view)
 
-### Requirements
+### Step 1: Clarify Requirements
 - longURL -> short code (6-8 chars); redirect code -> longURL fast; same longURL may map to same code (optional); codes must not be guessable if private.
 - Edge cases: collision on code generation (retry); expired/invalid code (404); custom aliases (uniqueness constraint).
 
-### Design
+### Step 3: Interaction Flows
+
+shorten: dedup check -> generate code -> putIfAbsent (retry on collision) -> store. resolve: lookup -> 404 on miss.
+
+### Step 4: Class Structure and Layers
+
+UrlShortener service over a UrlStore interface; Base62 codec; id source is a strategy (counter vs random).
+
+### Step 5: Core Use Cases
+
+shorten(): dedup -> generate -> atomic put. resolve(): lookup or 404. Custom alias = unique constraint.
+
+### Step 2: Core Entities and Relationships
 
 Core classes: `UrlShortener` (service: shorten/resolve), `UrlEntry` (code, longUrl, createdAt), `Base62` (stateless codec), id source (counter or random - two strategies, pick one per deployment). Store behind `UrlStore` interface (Map today, KV/DB in production) so the service never touches storage directly.
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 1. **Two ID strategies**: (a) base62 of a monotonic counter (simple, semi-sequential = somewhat guessable), (b) base62 of a random 64-bit (collision retry with DB unique constraint). Base62 alphabet [0-9a-zA-Z].
 2. Store is `Map<code, UrlEntry>` / KV DB; redirect is a pure read (cache hot entries).
 3. Guessability vs collision-rate trade-off: longer code = safer random picks (birthday paradox - 6 chars base62 is plenty for billions).
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
 ### Code
+
+
+### Step 9: Code (Java)
 
 ```java
 class Base62 {
@@ -4165,20 +4868,39 @@ class UrlShortener {
 
 ## 36. Stock Exchange
 
-### Requirements
+### Step 1: Clarify Requirements
 - Traders place BUY/SELL orders (symbol, qty, price, type LIMIT/MARKET); engine matches orders by price-time priority; executed trades update positions; cancel open order.
 - Edge cases: partial fills (remaining qty stays in book); MARKET order fills against best available; two orders arriving simultaneously (single matching thread = serializable).
 
-### Design
+### Step 3: Interaction Flows
+
+order lands in the matcher queue -> matched against the opposite book at best price, FIFO per level -> partial fills stay -> trades emitted.
+
+### Step 4: Class Structure and Layers
+
+OrderBook per symbol (TreeMaps for best price, deques for time priority); one matcher thread per symbol; Trade is an immutable record.
+
+### Step 5: Core Use Cases
+
+match(incoming): walk the book -> fill -> addResting if unfilled (unfilled MARKET is cancelled).
+
+### Step 2: Core Entities and Relationships
 
 Core classes: `Order` (id, side, price, qty, remaining - remaining is the mutable part), `OrderBook` (per symbol: bids TreeMap desc, asks TreeMap asc, each price level a FIFO deque), `Trade` (immutable record of a fill), `MatchingEngine` (single thread per symbol, pulls from an inbound queue). Single-writer design: no locks on the book itself; serializability comes from one matcher thread per symbol - same trick as the traffic controller.
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 1. **Order book per symbol**: bids = max-heap (TreeMap desc), asks = min-heap; each price level holds a FIFO queue (time priority). TreeMap gives O(log N) best-price access.
 2. **Single matcher thread per symbol** (or global): takes from order queues, runs matching loop, emits trades - serializability without locks.
 3. Partial fills: order holds remainingQty; trade records qty + price; positions updated in the same "transaction".
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
 ### Code
+
+
+### Step 9: Code (Java)
 
 ```java
 enum Side { BUY, SELL }
@@ -4237,20 +4959,39 @@ class OrderBook {
 
 ## 37. Meeting Platform (Zoom-style)
 
-### Requirements
+### Step 1: Clarify Requirements
 - Host creates meeting (id, password, settings); participants join/leave; roles HOST/COHOST/PARTICIPANT; mute/unmute self; host can mute anyone; screen share one at a time; meeting ends for all when host leaves (or reassign).
 - Edge cases: join after meeting locked; duplicate join same user (kick old session); capacity limit.
 
-### Design
+### Step 3: Interaction Flows
+
+create meeting -> join (lock and capacity checks) -> mute/share guarded by role -> host leaving ends the meeting or promotes a cohost.
+
+### Step 4: Class Structure and Layers
+
+Meeting aggregate holds participants and the single-sharer invariant; Participant carries Role; media plane is WebRTC, out of scope.
+
+### Step 5: Core Use Cases
+
+join()/leave()/muteOther()/startShare(): every guard lives inside Meeting.
+
+### Step 2: Core Entities and Relationships
 
 Core classes: `Meeting` (aggregate root: participants, lock flag, active sharer, capacity), `Participant` (userId, role, mute flags), `Role` enum (HOST, COHOST, PARTICIPANT - permission source). Media transport (WebRTC/SFU) is explicitly out of scope - this is the control plane. The one invariant worth stating aloud: at most one active screen share, enforced only in `startShare()`.
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 1. **Meeting is the aggregate** holding participants + a single `sharer` reference (invariant: at most one active share - enforce in `startShare()`).
 2. Role checks on privileged actions (mute-others, lock, end) - a `Role` enum + guard in Meeting, not scattered ifs.
 3. Media itself is out of LLD scope: model `MediaStream` as a participant's audio/video state (muted flags), actual transport is WebRTC (tie back to the streaming-protocols section).
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
 ### Code
+
+
+### Step 9: Code (Java)
 
 ```java
 enum Role { HOST, COHOST, PARTICIPANT }
@@ -4312,20 +5053,39 @@ class Meeting {
 
 ## 38. Distributed Cache
 
-### Requirements
+### Step 1: Clarify Requirements
 - get/put/delete with O(1)-ish latency; capacity per node with LRU eviction; cluster scales by adding nodes; minimal key remapping on node add/remove.
 - Edge cases: node dies mid-operation (replication or miss); hot key on one node (replication of hot keys); concurrent put same key (last-write-wins is acceptable - say it).
 
-### Design
+### Step 3: Interaction Flows
+
+get/put -> route the key around the consistent-hash ring -> local LRU on the owning node -> replicate to the R clockwise successors.
+
+### Step 4: Class Structure and Layers
+
+DistributedCache facade -> ConsistentHashRing -> CacheNode (wrapping the section-27 LRU). Membership changes remap only about 1/N keys.
+
+### Step 5: Core Use Cases
+
+route(): ceilingEntry walk (wrap-around). put(): node.put + fire-and-forget replica writes.
+
+### Step 2: Core Entities and Relationships
 
 Core classes: `DistributedCache` (client facade: get/put), `ConsistentHashRing` (routes keys to nodes, TreeMap of hash -> node, virtual nodes for balance), `CacheNode` (wraps a local LRU cache from section 27). Key->node mapping is pure computation, so routing needs no coordination; cluster membership changes (add/remove node) are the only writes to the ring. Replication: put also writes the next R clockwise nodes (fire-and-forget, repair on read).
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 1. **Consistent hashing ring** (TreeMap of hash->node): add/remove node remaps only ~1/N of keys (vs modulo hashing remapping almost all).
 2. Each node = an LRU cache (reuse section 27) + optional async replication to next R nodes on the ring.
 3. Client/router computes node by walking the ring clockwise; virtual nodes (replicas of each physical node on the ring) smooth distribution.
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
 ### Code
+
+
+### Step 9: Code (Java)
 
 ```java
 class CacheNode {
@@ -4377,20 +5137,39 @@ class DistributedCache {
 
 ## 39. Git (Version Control)
 
-### Requirements
+### Step 1: Clarify Requirements
 - Working directory -> stage changes -> commit with message; commit history is a DAG (branches, merge); checkout any commit; diff between commits.
 - Edge cases: merge conflict detection; commit is immutable once created; detached HEAD (checkout old commit).
 
-### Design
+### Step 3: Interaction Flows
+
+add stages files -> commit builds the tree, hashes the commit, moves the branch pointer -> merge finds the common ancestor and reconciles three ways.
+
+### Step 4: Class Structure and Layers
+
+Immutable Blob/Tree/Commit objects in a content-addressed store; Branch is a movable pointer; Repository hosts operations.
+
+### Step 5: Core Use Cases
+
+commit(): buildTree -> hash -> save -> move head. merge(): fast-forward or 3-way with conflict markers.
+
+### Step 2: Core Entities and Relationships
 
 Core classes: `Blob` (file bytes), `Tree` (named pointers to blobs/trees), `Commit` (tree + parents + message - the DAG node), `Branch` (a movable pointer to a commit hash), `Repository` (operations), `GitObjectStore` (content-hash -> object, the single source of truth). Everything is immutable once hashed - branches are the only mutable state. This immutability is why history is shareable and merges are just pointer moves.
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 1. **Content-addressable object store**: Blob (file content), Tree (directory listing of blobs/trees), Commit (tree + parent(s) + message + author). Everything keyed by content hash (SHA-1) - same content = same id, automatic dedup, integrity.
 2. **Commit = snapshot pointer, not a delta** (deltas are a storage optimization, hide them).
 3. Merge = 3-way: compare two commits against their common ancestor (recursively on trees); conflict when both sides changed the same line region.
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
 ### Code
+
+
+### Step 9: Code (Java)
 
 ```java
 record Blob(String hash, byte[] content) {}
@@ -4448,14 +5227,29 @@ class Repository {
 
 ## 40. Thread-Safe Singleton
 
-### Requirements
+### Step 1: Clarify Requirements
 - Exactly one instance in the JVM; lazy or eager; safe under concurrent access; serialization- and reflection-proof (bonus points).
 
-### Design
+### Step 3: Interaction Flows
+
+getInstance -> the chosen idiom returns the single instance (enum field read, holder class init, volatile DCL, or eager static).
+
+### Step 4: Class Structure and Layers
+
+One class; the design decision is which guarantee you need - reflection safety, serialization safety, laziness.
+
+### Step 5: Core Use Cases
+
+getInstance(): four idioms; attack surfaces to name: reflection and serialization.
+
+### Step 2: Core Entities and Relationships
 
 Decision matrix: enum (best - JVM-enforced single instance, reflection/serialization safe), holder idiom (lazy, lock-free, but reflection can break it), double-checked locking (works only with volatile, subtle published-without-construction hazard), eager (simplest, loads early). The design question here is not "how" but "which guarantees do you need" - answer enum first and explain the attack surfaces the others leave open.
 
 ### The four options (know all four, rank them)
+
+
+### Step 9: Code (Java)
 
 ```java
 // 1. ENUM - the best answer. JVM guarantees one instance, lazy enough, and
@@ -4499,22 +5293,45 @@ class EagerSingleton {
 
 ---
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
 ## 41. Custom Thread Pool
 
-### Requirements
+### Step 1: Clarify Requirements
 - Fixed worker threads consuming from a queue; submit(Runnable) non-blocking up to queue capacity; beyond capacity apply rejection policy; graceful shutdown completes queued tasks; shutdownNow interrupts workers.
 - Edge cases: submit after shutdown (Reject); worker dies from a task exception (replace it); idle workers must not spin (use blocking take).
 
-### Design
+### Step 3: Interaction Flows
+
+submit -> offer to the bounded queue or run the rejection policy -> worker takes and runs -> shutdown sets the flag and interrupts, queue drains.
+
+### Step 4: Class Structure and Layers
+
+Pool owns worker threads and a BlockingQueue handoff; RejectionPolicy is a strategy.
+
+### Step 5: Core Use Cases
+
+submit(): shutdown check + bounded offer. workerLoop(): take -> run inside catch(Throwable). shutdown(): flag + interrupt.
+
+### Step 2: Core Entities and Relationships
 
 Core classes: `SimpleThreadPool` (owns workers + queue + shutdown flag), worker threads (loop: take -> run, catch Throwable), `BlockingQueue<Runnable>` (the handoff), `RejectionPolicy` (interface). Producer-consumer with the queue as the only coupling; workers are anonymous and replaceable. Shutdown flag is volatile so submitters see it without locking; queue capacity is what provides backpressure to submitters.
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 1. **BlockingQueue as the handoff** (reuse section 42) - producer (submitters) never couples to workers.
 2. Workers are long-lived daemon threads looping `take()` -> `run()`, catching Throwable so one bad task doesn't kill the pool.
 3. Rejection policy as strategy: Abort, CallerRuns, DropOldest.
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
 ### Code
+
+
+### Step 9: Code (Java)
 
 ```java
 interface RejectionPolicy { void reject(Runnable task, SimpleThreadPool pool); }
@@ -4564,19 +5381,38 @@ class RejectedExecutionException extends RuntimeException {}
 
 ## 42. Blocking Queue
 
-### Requirements
+### Step 1: Clarify Requirements
 - Bounded queue; put blocks when full; take blocks when empty; FIFO; support multiple producers and consumers.
 
-### Design
+### Step 3: Interaction Flows
+
+put: lock, await notFull while full, insert, signal notEmpty. take: the mirror image. Consumers and producers block instead of spinning.
+
+### Step 4: Class Structure and Layers
+
+One ReentrantLock, two Conditions, circular array - the textbook monitor.
+
+### Step 5: Core Use Cases
+
+put()/take(): while-await discipline; signal (not signalAll) wakes one correct waiter.
+
+### Step 2: Core Entities and Relationships
 
 Core classes: `SimpleBlockingQueue` (ring buffer + one ReentrantLock + two Conditions). One lock keeps the invariants trivially provable; the two conditions split "waiters for non-empty" from "waiters for non-full" so a put wakes exactly one consumer and vice versa. Design choice to defend: `while` around every await (spurious wakeups + signal stealing), and signal() instead of signalAll() (only one waiter can proceed anyway).
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 1. **One lock + two Conditions** (notEmpty, notFull) is the textbook answer - simpler than two locks and correct.
 2. `while` (not `if`) around every await - guards spurious wakeups and signal-stealing between multiple consumers.
 3. Circular array ring buffer = no shifting, no allocation in steady state.
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
 ### Code
+
+
+### Step 9: Code (Java)
 
 ```java
 class SimpleBlockingQueue<T> {
@@ -4625,19 +5461,38 @@ class SimpleBlockingQueue<T> {
 
 ## 43. Producer-Consumer
 
-### Requirements
+### Step 1: Clarify Requirements
 - Multiple producers generate work; multiple consumers process it; bounded buffer; consumers shouldn't poll (block when empty); producers back-pressured when full; clean shutdown.
 
-### Design
+### Step 3: Interaction Flows
+
+producers put work, consumers take it; each consumer forwards the poison pill before exiting so all of them shut down.
+
+### Step 4: Class Structure and Layers
+
+A bounded BlockingQueue is the entire handoff; poison pill is the shutdown protocol.
+
+### Step 5: Core Use Cases
+
+producer loop: put tasks. consumer loop: take -> process -> on POISON re-put and exit.
+
+### Step 2: Core Entities and Relationships
 
 Actors: producer threads (offer work), consumer threads (take + process), `SimpleBlockingQueue` (bounded handoff - the entire synchronization). Shutdown design: poison pill per consumer; each consumer forwards the pill before exiting so all consumers get one. The queue's boundedness is the backpressure - producers block at capacity instead of growing memory. In production this exact shape is ExecutorService + BlockingQueue.
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 1. The whole pattern IS the blocking queue (section 42) - this topic tests whether you see that, plus poison-pill shutdown.
 2. Poison pill: enqueue a sentinel task; each consumer that takes it re-enqueues (for others) and exits - orderly drain.
 3. In production: `ExecutorService` + `BlockingQueue`, or just `new LinkedBlockingQueue` + fixed pool.
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
 ### Code
+
+
+### Step 9: Code (Java)
 
 ```java
 public class ProducerConsumerDemo {
@@ -4679,20 +5534,39 @@ public class ProducerConsumerDemo {
 
 ## 44. Web Crawler
 
-### Requirements
+### Step 1: Clarify Requirements
 - Start from seed URLs; fetch page, extract links, enqueue unseen ones; respect per-host politeness delay; bounded concurrency; terminate when frontier empty; dedup URLs (billions -> Bloom filter).
 - Edge cases: cycles (A->B->A); duplicate URLs differing only by fragment (#x); relative URL resolution; traps (calendar pages - depth limit).
 
-### Design
+### Step 3: Interaction Flows
+
+dequeue URL -> normalize and dedup -> per-host politeness wait -> fetch -> parse -> enqueue unseen links.
+
+### Step 4: Class Structure and Layers
+
+Frontier queue, visited set, politeness map, stateless workers - any worker can take any URL.
+
+### Step 5: Core Use Cases
+
+crawl(): seeds -> worker join. enqueue(): dedup via visited.add().
+
+### Step 2: Core Entities and Relationships
 
 Core classes: `WebCrawler` (worker orchestration), frontier (`BlockingQueue<String>` - shared work), visited set (ConcurrentHashMap.newKeySet() - dedup + cycle safety), per-host politeness map (last fetch timestamp), Fetcher/Parser (side-effecting, behind an interface so it's mockable). Workers are stateless - any worker can take any URL, which is what makes scaling worker count trivial. Frontier is the persistence boundary (checkpoint it for crash recovery).
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 1. **Frontier = BlockingQueue; visited = ConcurrentHashMap.newKeySet()** (interview scale) or Bloom filter + DB (web scale, false positives just skip a URL).
 2. Politeness: per-host last-fetch timestamp map; worker sleeps to respect delay; robots.txt honored in production (mention).
 3. Frontier is the persistence boundary - a real crawler checkpoints it (crash recovery).
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
 ### Code
+
+
+### Step 9: Code (Java)
 
 ```java
 class WebCrawler {
@@ -4748,7 +5622,7 @@ class WebCrawler {
 
 ## 45. Immutable Class
 
-### Requirements
+### Step 1: Clarify Requirements
 
 The rules, in the order you should recite them:
 1. Declare the class `final` (no subclassing = no mutable override).
@@ -4758,11 +5632,26 @@ The rules, in the order you should recite them:
 5. If a mutable field must be returned, return a copy.
 6. Don't leak `this` from the constructor (no publishing before construction completes).
 
-### Design
+### Step 3: Interaction Flows
+
+Constructor copies mutable inputs in; getters copy them out; no code path mutates state after construction.
+
+### Step 4: Class Structure and Layers
+
+One final class; defensive copies; unmodifiable wrappers; no this-escape from the constructor.
+
+### Step 5: Core Use Cases
+
+The 6-rule checklist; records give shallow immutability only - components can still be mutable.
+
+### Step 2: Core Entities and Relationships
 
 The design is a checklist enforced by construction: final class, private final fields, no mutators, defensive copies in and out, no `this` escape from the constructor. The two real decisions: (1) wrap collections with `Collections.unmodifiableList(new ArrayList<>(input))` - both copy AND wrap, doing only one is the classic bug; (2) prefer immutable types (String, LocalDate, BigDecimal) as fields so defensive copying mostly disappears. Records give you the syntax but not deep immutability - components can still be mutable objects.
 
 ### Code
+
+
+### Step 9: Code (Java)
 
 ```java
 import java.util.ArrayList;
@@ -4791,21 +5680,44 @@ final class Employee {
 
 ---
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
 ## 46. Custom Read-Write Lock
 
-### Requirements
+### Step 1: Clarify Requirements
 - Many readers OR one writer; readers exclude writers; writers exclude everyone; fair-ish (avoid writer starvation); support lock downgrading (write -> read), reject or document upgrading.
 
-### Design
+### Step 3: Interaction Flows
+
+lockRead: wait while a writer holds or writers queue, then count readers up. lockWrite: queue, wait for readers==0 and no writer, take exclusive. Unlock wakes all waiters.
+
+### Step 4: Class Structure and Layers
+
+One monitor, three counters; the writeRequests counter is the anti-starvation design decision.
+
+### Step 5: Core Use Cases
+
+lockRead/unlockRead/lockWrite/unlockWrite: paired guards; downgrade (write->read) safe, upgrade rejected.
+
+### Step 2: Core Entities and Relationships
 
 Core class: `SimpleReadWriteLock` with three counters on one monitor - readers (active), writer (0/1), writeRequests (queued writers). The third counter is the design decision: without it, a steady reader stream starves writers. Rules to state: downgrading (write -> read) is safe and supported; upgrading (read -> write) deadlocks with two contenders, so it is rejected and the caller must release-then-acquire. Fairness is reader-blocks-behind-queued-writer, same policy as ReentrantReadWriteLock's fair mode.
 
-### Key design decisions
+### Step 6: Design Decisions, Patterns and SOLID
 1. Single monitor with counters: `readers`, `writer`, `writeRequests` (the third counter prevents writer starvation - new readers queue behind waiting writers).
 2. Downgrade (write -> read) is safe: hold write, acquire read, release write. Upgrade (read -> write) deadlocks if two threads try it - say so.
 3. This is exactly `ReentrantReadWriteLock` internals - name the mapping.
 
+### Step 8: Package Structure and Class Diagram
+
+Packages: `domain/` (entities and enums), `service/` (business logic and state machines), `repository/` (persistence interfaces, in-memory impls for the interview), `adapter/` (external systems - only where the topic has any), `dto/` (result objects). Include only what the topic uses. Class diagram: see the diagram blocks above.
+
 ### Code
+
+
+### Step 9: Code (Java)
 
 ```java
 class SimpleReadWriteLock {
