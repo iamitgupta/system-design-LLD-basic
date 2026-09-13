@@ -148,21 +148,26 @@ Parking Lot (sections 1-2) is rebuilt below as the reference exemplar of this st
 
 ---
 
-## F1. OOP - The Four Pillars
+## F1. OOP - The Four Pillars (Complete Notes)
 
-### Abstraction
-Expose what an object does, hide how. In Java: interfaces and abstract classes.
+### 0. Why OOP at all
+Object-oriented design decomposes a system into objects that combine state (fields) and behavior (methods), communicating through messages (method calls). The goal in LLD: model the domain faithfully, keep each unit small and replaceable, and make invalid states unrepresentable. The four pillars are means, not ends - interviewers probe whether you know *when not to* use each one.
+
+### 1. Abstraction - hide the how, expose the what
+Show callers only the contract; hide implementation and state.
 
 ```java
-interface PaymentGateway { boolean charge(double amount); }   // what
-class StripeGateway implements PaymentGateway {                  // how
+interface PaymentGateway { boolean charge(double amount); }   // what: a capability
+class StripeGateway implements PaymentGateway {                // how: one realization
     public boolean charge(double amount) { /* Stripe API */ return true; }
 }
 ```
-Interview line: "Callers depend on the interface, so the implementation can change or be mocked in tests."
+- Achieved via interfaces and abstract classes.
+- Test benefit: mock the interface. Extensibility benefit: swap realizations.
+- Interview line: "Callers depend on the abstraction, so the implementation can change or be mocked in tests."
 
-### Encapsulation
-Bundle data with behavior, restrict direct field access. Never expose mutable state; no public setters for lifecycle fields (status, balance).
+### 2. Encapsulation - the invariant lives behind the wall
+Bundle data with the behavior that guards it; never expose mutable state directly.
 
 ```java
 class Account {
@@ -173,277 +178,1053 @@ class Account {
     }
 }
 ```
-Interview line: "The invariant (no overdraft) lives in one place because the field is private."
+- Public getters that expose mutable internals (returning the List itself) break encapsulation just as setters do - return copies or unmodifiable views.
+- The real test: can any sequence of external calls put the object in an invalid state? If yes, encapsulation is broken. Every `debit/credit/complete()` guard in this book is encapsulation enforced.
 
-### Inheritance ("is-a") vs Composition ("has-a")
-Prefer composition. Inheritance breaks encapsulation (subclass depends on parent's internals), locks you into a hierarchy, and is only right for true is-a relationships with a stable base.
+### 3. Inheritance (is-a) - powerful, dangerous
+A subclass inherits fields and methods of its parent and may override behavior.
+
+When it is right:
+- True is-a relationship that will stay stable.
+- Shared state + shared implementation (abstract base with concrete helpers).
+
+When it is wrong (the classic traps):
+- **Inheritance for reuse only**: `Stack extends ArrayList` - a stack is NOT an array list; you inherit 20+ methods that can corrupt the stack (`add(index, e)`). Prefer composition:
 
 ```java
-// Bad: Stack extends ArrayList - is a Stack really an ArrayList? No.
-// Good:
 class Stack<T> {
-    private final List<T> items = new ArrayList<>();  // has-a
+    private final List<T> items = new ArrayList<>();   // has-a
     public void push(T t) { items.add(t); }
     public T pop() { return items.remove(items.size() - 1); }
 }
 ```
-The one acceptable inheritance in these notes: `Expense -> EqualExpense/ExactExpense/PercentExpense`, because split behavior IS the type.
+- **Fragile base class problem**: the base evolves, subclasses break silently. You depend on internals you do not control.
+- **LSP violations** (see F2): overriding that weakens the contract.
 
-### Polymorphism
-Same call, different behavior. Compile-time (overloading) vs runtime (overriding). Runtime polymorphism is what makes Strategy/State work - every `strategy.compute(...)` call in this book is polymorphism doing its job.
-
-### Abstract class vs Interface (memorize the table)
-
-| | Interface | Abstract class |
-|---|---|---|
-| Fields | public static final only | any instance state |
-| Methods | abstract + default/static (Java 8+) | abstract + concrete |
-| Multiple inheritance | yes | no |
-| Use when | a capability ("can pay", "can append") | a family with shared state ("is a shape") |
-
-Java 8+ blurs the line: default methods let interfaces evolve; pick interfaces for capabilities, abstract classes for shared implementation + state.
-
-### The questions that always follow
-- **Composition vs inheritance?** Composition - say it before being asked.
-- **Why favor immutability?** Thread-safe, cacheable, safe to share. (Full treatment in section 45.)
-- **equals/hashCode contract?** Equal objects must have equal hash codes; override both or neither; use in HashMap/HashSet keys consistently. Break it and your HashMap "loses" objects.
-
----
-
-## F2. SOLID - Principle by Principle
-
-| Principle | Rule | Violation looks like | Fix |
-|---|---|---|---|
-| **S**RP | One class, one reason to change | `OrderService` that also emails, logs, and prints | Split into OrderService, NotificationService, ReportService |
-| **O**CP | Open for extension, closed for modification | `if (type == CARD) ... else if (type == CASH)` chains | Strategy: new behavior = new class |
-| **L**SP | Subtypes must be substitutable for their base | `Square extends Rectangle` breaks setWidth semantics | Redesign hierarchy; favor composition |
-| **I**SP | Many specific interfaces over one fat interface | `Worker` with `work()` + `eat()` - a robot must "eat" | `Workable`, `Eatable` separately |
-| **D**IP | Depend on abstractions, not concretions | Service news-up a `new MySqlRepo()` | Inject `Repository` interface; wire at the edge |
+The compromise that works: **template method** - inheritance with the skeleton fixed by the base and hooks overridden by design:
 
 ```java
-// OCP + DIP in one snippet - the pattern this whole book repeats
-interface FeeStrategy { double compute(long entry, long exit, VehicleType t); }
-class ParkingService {
-    private final FeeStrategy fees;                       // depends on abstraction
-    ParkingService(FeeStrategy fees) { this.fees = fees; } // injected
-    // new pricing rule? new FeeStrategy class. This file never changes.
+abstract class Expense {                       // from section 31
+    abstract Map<User, Money> shares();        // hook
+    protected void validateTotal(Map<User, Money> split) { /* shared */ }  // skeleton
 }
 ```
 
-LSP deserves one concrete trap: the classic `Rectangle/Square`. A `Square` cannot honor `Rectangle.setWidth(w)` (it would change height too), so substituting a Square where Rectangle is expected breaks callers. Interview line: "If overriding a method weakens the contract or strengthens preconditions, LSP is broken - restructure."
+### 4. Polymorphism - one call site, many behaviors
+- **Compile-time (static)**: method overloading - resolved by the compiler from argument types.
+- **Runtime (dynamic)**: overriding - resolved from the actual object's class at runtime.
 
-Where SOLID appears in this book: the Step 6 table of every topic maps decisions to principles; parking lot section 1 has the reference table.
+```java
+FeeStrategy s = rules.get(type);   // type unknown at compile time
+double fee = s.compute(entry, exit, type);   // Strategy/State/every polymorphic seam
+```
+Every Strategy and State in this book is runtime polymorphism doing the heavy lifting - new behavior without touching call sites (OCP).
+
+### 5. Coupling and cohesion (the qualities the pillars serve)
+- **Cohesion**: how focused a class is. High = one clear responsibility (SRP is cohesion enforced).
+- **Coupling**: how much classes depend on each other. Low = change one, break none (DIP targets this).
+Interview framing: "Good OOP raises cohesion and lowers coupling." Any design decision can be judged with these two words.
+
+### 6. Association vs aggregation vs composition - in code terms
+All three are "has-a"; they differ in lifetime and ownership:
+- **Association**: plain reference, both live independently. `Teacher --> Student`.
+- **Aggregation** (hollow diamond): the whole groups parts; parts outlive it. `Department o-- Professor`.
+- **Composition** (filled diamond): the whole owns the parts; parts are created/destroyed with it. `Order *-- OrderLine` - lines are constructed by the order and meaningless alone.
+
+The one-line test: **delete the owner - does the part still make sense?** Yes = aggregation, no = composition. (Full notation rules in F4.)
+
+### 7. Abstract class vs interface (decision table)
+
+| | Interface | Abstract class |
+|---|---|---|
+| Instance state (fields) | only constants | yes |
+| Method bodies | default/static (Java 8+) | yes, mixed freely |
+| Multiple inheritance | yes | no |
+| Constructor | none | yes |
+| Use when | a capability across unrelated types ("can pay") | a family sharing state and implementation ("is a shape") |
+
+Java 8+ blurs the line: default methods let interfaces evolve without breaking implementors (e.g., `forEach` added to `Collection`). Rule: reach for interfaces first; use abstract classes when you genuinely need shared mutable state or non-trivial shared implementation.
+
+### 8. The contracts you must recite: equals, hashCode, compareTo
+
+**equals contract** (reflexive, symmetric, transitive, consistent, null-returns-false). Template:
+```java
+@Override public boolean equals(Object o) {
+    if (this == o) return true;
+    if (!(o instanceof Money m)) return false;          // Java 16 pattern matching
+    return amount.compareTo(m.amount) == 0;             // compareTo, not ==, for BigDecimal
+}
+@Override public int hashCode() { return Objects.hash(amount); }
+```
+Why both: `HashMap` finds the bucket by `hashCode`, then confirms with `equals`. Override one without the other and keys "disappear" from maps. Use `Objects.hash` (note: allocates; for hot paths hand-roll). Never mutate fields that participate in equals/hashCode while the object is a map key.
+
+**Comparable vs Comparator**: natural order (`a.compareTo(b)`, implement when the type has one obvious order) vs external strategies (`Comparator.comparing(Person::getAge).reversed()`). `BigDecimal.equals` considers scale (1.0 != 1.00) but `compareTo` does not - a favorite trap.
+
+### 9. final, static, and friends
+- `final` class: no subclassing (immutability helper). `final` method: no override. `final` field: assign once (constructor) - safe publication for free.
+- `static`: belongs to the class, not instances. No `this`, no overriding (hiding instead - a trap).
+- `final` + immutable object + no setters = the simplest thread-safe class (see F5 and section 45).
+
+### 10. Common interview questions on OOP
+1. Composition vs inheritance? (composition - plus when inheritance is genuinely right)
+2. Why is String immutable? (security, cache hash, thread-safety, string pool sharing)
+3. Can you override a constructor? (no; constructors aren't inherited or overridden - they chain via `this()`/`super()`)
+4. What happens if a subclass constructor doesn't call super? (compiler inserts a no-arg super call; fails if the parent lacks one)
+5. Difference between abstraction and encapsulation? (abstraction = what you expose; encapsulation = what you forbid)
+6. Dynamic dispatch - how does the JVM pick the method? (vtable lookup on the runtime class)
 
 ---
 
-## F3. Design Patterns - The Working Catalog
+---
 
-You need ~12 patterns cold; you need to recognize the rest. Format: name - problem it solves - where it appears in this book.
+## F2. SOLID - Principle by Principle (Complete Notes)
 
-### Creational (how objects are made)
-| Pattern | Solves | In this book |
-|---|---|---|
-| **Singleton** | exactly one instance | ParkingLot controller, LogManager - section 40 |
-| **Factory** | hide creation logic | VehicleFactory, Logger creation |
-| **Abstract Factory** | families of related objects | (mention for UI toolkits, JDBC ConnectionFactory) |
-| **Builder** | step-by-step construction of complex objects | `HttpRequest`, `Pizza`; great for objects with many optional fields |
-| **Prototype** | clone instead of rebuild | rare in interviews; mention clone/copy constructors |
+### Why SOLID is scored so heavily
+LLD rounds are graded on whether your design survives change. SOLID is the checklist interviewers use to predict that. Know each principle as: definition, code smell, violation, fix, and one sentence you can say in the room.
 
-Builder snippet (know it cold):
+### S - Single Responsibility Principle
+**One class, one reason to change.** A "reason to change" = an actor (who asks for the change).
+
+Violation: `OrderService` that validates orders, prices them, emails customers, and prints reports. Four actors, four reasons to change, one class to break.
+
+```java
+class OrderService {                                  // fixed: split by actor
+    private final PricingService pricing;
+    private final NotificationService notifications;
+    public void place(Order o) {
+        pricing.price(o); orderRepository.save(o); notifications.send(o);
+    }
+}
+```
+Room line: "I split by actor - whoever asks for a change should touch exactly one class."
+
+### O - Open/Closed Principle
+**Open for extension, closed for modification.** New behavior without editing existing, tested code.
+
+Violation: the growing if-chain.
+```java
+double fee = switch (type) {                          // fixed: polymorphism
+    case CAR  -> carStrategy.compute(t);
+    case BIKE -> bikeStrategy.compute(t);
+};
+```
+```java
+interface FeeStrategy { double compute(Ticket t); }   // new vehicle type = new class
+```
+Room line: "New behavior arrives as a new class, never as an edit to this one - that's what makes the old tests stay green."
+Watch for: switch-on-type is the canonical OCP smell. Enums with behavior are the middle ground (closed set + polymorphism).
+
+### L - Liskov Substitution Principle
+**Subtypes must be substitutable for their base without breaking callers.** If it quacks like a substitute but the caller breaks, the hierarchy is wrong.
+
+The canonical violation:
+```java
+class Rectangle { void setWidth(int w){...} void setHeight(int h){...} }
+class Square extends Rectangle {                       // setWidth also sets height
+    void setWidth(int w) { super.setWidth(w); super.setHeight(w); }
+}
+// caller expects: r.setWidth(5); r.setHeight(4); -> area 20. With Square: area 16. Broken.
+```
+Fix: no inheritance between them; both implement `Shape { double area(); }`.
+
+Another flavor - strengthened preconditions: a subclass that throws for inputs the base accepted also violates LSP (callers of the base can't rely on the contract). Room line: "If substituting the subtype changes what callers can rely on, LSP is broken - restructure to composition or a shared interface."
+
+### I - Interface Segregation Principle
+**Clients shouldn't depend on methods they don't use.** Many small interfaces over one fat interface.
+
+```java
+interface Worker { void work(); void eat(); }        // violation: a Robot must "eat"
+interface Workable { void work(); }
+interface Eatable { void eat(); }
+class Robot implements Workable { public void work() { } }
+```
+Symptom to name: implementors that throw `UnsupportedOperationException` or leave methods empty - the interface is forcing a contract they can't honor. In this book: `ATMState` gives every state only the operations it can honor, with default no-ops - ISP applied.
+
+### D - Dependency Inversion Principle
+**Depend on abstractions, not concretions.** High-level policy shouldn't import low-level details.
+
+```java
+class PricingService {                                 // violation
+    private final InMemoryRuleRepository repo = new InMemoryRuleRepository();
+}
+// fixed: inject the interface; wire the concrete class at the composition root (main/Factory)
+class PricingService {
+    private final PricingRuleRepository repo;
+    PricingService(PricingRuleRepository repo) { this.repo = repo; }
+}
+```
+The full pattern: interfaces owned by the high-level layer, implemented by the low-level layer, wired at the edge (`main`). That is what Repository + Adapter in every topic of this book does.
+Room line: "The service depends on the interface it would design for itself; the database adapter depends on it from below. Swapping storage is a wiring change, not a service change."
+
+### SOLID at a glance
+
+| Principle | Smell | Fix | One-liner |
+|---|---|---|---|
+| SRP | class touched by many actors | split by responsibility | one reason to change |
+| OCP | switch/if on type | strategy polymorphism | new behavior = new class |
+| LSP | subclass weakens contract | shared interface/composition | substitutable everywhere |
+| ISP | empty/throwing implementations | role interfaces | use only what you need |
+| DIP | `new` of concrete in high-level code | constructor injection of interfaces | depend on abstractions |
+
+### Beyond SOLID - the principles interviewers also accept as answers
+- **DRY**: don't repeat knowledge - but beware dedupling things that change for different reasons (SRP beats DRY).
+- **KISS / YAGNI**: simplest design that meets known requirements; every seam you build "just in case" is code you must maintain. State the seam, build it when needed.
+- **Law of Demeter**: talk only to immediate friends - no `a.getB().getC().do()` chains (train wrecks); it leaks structure and couples callers to navigation.
+- **Composition over inheritance**: F1 has the full treatment.
+- **Program to an interface**: declare variables/params as the interface type.
+- **Encapsulate what varies**: find the change axis and isolate it - this single habit generates most "patterns" naturally.
+
+### How SOLID maps to this book
+Every topic's Step 6 table names the principle behind each decision - parking lot's is the reference. In the room: when the interviewer asks "why did you do X", answer with the principle name and the smell it prevents.
+
+---
+
+---
+
+## F3. Design Patterns - The Working Catalog (Complete Notes)
+
+### How to talk about patterns in an interview
+Name the pattern, the problem it solves, and the trigger condition - in one sentence: "Strategy: the algorithm varies per type, so I extract an interface and inject it." A pattern name without the problem is a negative signal; the trigger condition ("when the if-chain grows") is what proves you recognize it in the wild.
+
+### Creational - how objects come into being
+
+**Singleton** - exactly one instance, global access point.
+Triggers: config, connection pool, controllers/registries. Full treatment (enum vs holder vs DCL vs eager) in section 40 - that file is the answer.
+Pitfall: singletons hide dependencies (static access defeats DIP) and hurt testability - prefer injected singleton-scoped beans in real apps.
+
+**Factory** - hide construction logic; callers ask for the product by kind.
+```java
+class VehicleFactory {
+    static Vehicle create(String plate, VehicleType t) {
+        return switch (t) { case CAR -> new Car(plate); case BIKE -> new Bike(plate); default -> throw new IllegalArgumentException(); };
+    }
+}
+```
+Trigger: `new` scattered with logic around it. Escalation: when products come in families (UI toolkit: Button + Checkbox per OS), use Abstract Factory - a factory per family.
+
+**Builder** - step-by-step construction when constructors would explode (telescoping) or when the object must be complete before use.
 ```java
 HttpRequest req = new HttpRequest.Builder()
-    .url("...").method("POST").header("Auth", "...").body(json).build();
+        .url("...").method("POST").header("Auth", "...").body(json).build();
 ```
+Trigger: 4+ optional constructor params. In LLD: complex config objects, test fixtures.
 
-### Structural (how classes compose)
-| Pattern | Solves | In this book |
-|---|---|---|
-| **Adapter** | bridge incompatible interfaces | PaymentGatewayAdapter -> Razorpay/Stripe (parking lot) |
-| **Decorator** | add behavior without subclassing | coffee-shop example; Java IO (`BufferedReader` wraps `Reader`) |
-| **Facade** | one simple entry over a complex subsystem | `ElevatorController` hides the fleet |
-| **Proxy** | controlled access (lazy, remote, protection) | `BankService` stands in for the real bank at the ATM |
-| **Composite** | treat tree and leaf uniformly | file/folder; album/track collections |
-| **Flyweight** | share objects to save memory | intrinsic vs extrinsic state; thread pools of Strings |
+**Prototype** - clone instead of rebuild (expensive construction, many similar objects). Java: copy constructor preferred over `clone()` (Cloneable is broken design - no public `clone`, checked exception, shallow by default). Mention; rarely coded in interviews.
 
-### Behavioral (how objects interact)
-| Pattern | Solves | In this book |
-|---|---|---|
-| **Strategy** | interchangeable algorithms | fee calc, dispatch, pricing, fare - everywhere |
-| **State** | behavior changes with lifecycle | vending machine, traffic signal, elevator, booking |
-| **Observer** | one-to-many notification | display board, task listeners, logging |
-| **Command** | encapsulate requests (queue/undo/log) | ATM transactions |
-| **Chain of Responsibility** | pass along handlers | ATM denomination chain, logging filters |
-| **Template Method** | skeleton fixed, steps vary | Expense base class validation |
-| **Iterator** | traverse without exposing internals | playlist playback, consumer offset cursor |
-| **Mediator** | reduce object-to-object coupling | (traffic controller as mediator variant) |
-| **Memento** | snapshot/restore state | (editor undo; Git is memento-like) |
+### Structural - how classes compose
 
-Interview rule: name the pattern AND the problem it solves in one sentence. "State - behavior changes with lifecycle, so each state owns its transitions." A pattern name without a justification is a negative signal.
+**Adapter** - bridge two incompatible interfaces; the class you need doesn't speak your interface.
+```java
+interface PaymentGatewayAdapter { boolean charge(UUID id, double amt); }
+class RazorpayAdapter implements PaymentGatewayAdapter { /* translate to Razorpay SDK */ }
+```
+Trigger: third-party SDK, legacy system. This book: every gateway/bank/PSP boundary.
+
+**Decorator** - add behavior at runtime without subclassing; objects wrap objects sharing one interface.
+```java
+interface Coffee { double cost(); }
+class SimpleCoffee implements Coffee { public double cost() { return 2; } }
+abstract class CoffeeDecorator implements Coffee { protected final Coffee inner; CoffeeDecorator(Coffee c) { inner = c; } }
+class Milk extends CoffeeDecorator { Milk(Coffee c) { super(c); } public double cost() { return inner.cost() + 0.5; } }
+// new Milk(new SimpleCoffee()).cost() == 2.5 - stacking behaviors
+```
+Trigger: combinations explode by subclassing. Java IO (`new BufferedReader(new FileReader(...))`) is the stdlib example.
+
+**Facade** - one simple entry over a complex subsystem.
+Trigger: "do the thing" spans 5 classes (fleet dispatch, report generation). This book: `ElevatorController` hides the fleet. Benefit: subsystem changes don't leak to clients.
+
+**Proxy** - same interface, controlled access: remote (network stub), virtual (lazy load), protection (permission check).
+```java
+class LazyImage implements Image {                       // virtual proxy
+    private RealImage real; private final String path;
+    public void render() { if (real == null) real = new RealImage(path); real.render(); }
+}
+```
+This book: `BankService` at the ATM is a proxy for the real bank. Proxy vs decorator: decorator adds behavior, proxy controls access - same shape, different intent.
+
+**Composite** - tree and leaf share an interface; clients treat them uniformly.
+Trigger: file/folder, UI component trees, album/track. Often just "a collection that contains items or sub-collections."
+
+**Flyweight** - share intrinsic state to support huge numbers of fine-grained objects.
+Trigger: text editor characters (glyph shared, position extrinsic), game particles. Mention with the intrinsic/extrinsic vocabulary; rarely coded.
+
+### Behavioral - how objects interact
+
+**Strategy** - family of interchangeable algorithms behind one interface; chosen at runtime.
+```java
+interface FareStrategy { double compute(Ride r, double surge); }
+// StandardFare, PremiumFare... injected where the fare is needed
+```
+The single most-used pattern in this book (fees, pricing, matching, dispatch, change-making). Trigger: switch on type, algorithm varies per instance/context.
+
+**State** - an object's behavior changes with its lifecycle; each state object owns its transitions.
+Trigger: "it depends what state it's in" logic multiplying. This book: vending machine, traffic signal, elevator, booking, driver, ride. Default no-op methods on the state interface make illegal operations structurally impossible - name that trick.
+
+**Observer** - one subject, many listeners, push on change.
+```java
+interface TaskEventListener { void onAssigned(TaskAssignedEvent e); }
+class TaskService {
+    private final List<TaskEventListener> listeners = new CopyOnWriteArrayList<>();
+    void assign(...) { repo.save(t); listeners.forEach(l -> l.onAssigned(evt)); }
+}
+```
+Trigger: events fan out to unknown consumers (email, slack, analytics). Rules: listeners fire after the state change commits; events carry snapshots, not live references.
+
+**Command** - a request as an object: queue it, log it, retry it, undo it.
+```java
+interface Command { void execute(); void undo(); }
+class WithdrawalCmd implements Command { /* target + params + execute/undo bodies */ }
+```
+This book: ATM transactions (execute + compensating credit = undo). Trigger: requests need scheduling/history/undo.
+
+**Chain of Responsibility** - pass a request along handlers; each handles what it can or forwards.
+```java
+abstract class CashHandler {
+    protected CashHandler next;
+    abstract void dispense(int amount, Map<Denomination, Integer> out);
+}
+```
+This book: ATM denomination chain, logging filter chain. Trigger: handlers vary, order composes, sender shouldn't know who handles it.
+
+**Template Method** - skeleton in the base (final), steps overridable (hooks).
+```java
+abstract class DataExporter {
+    final void export() { open(); writeHeader(); writeRows(); close(); }   // skeleton
+    abstract void writeRows();                                              // hook
+}
+```
+Trigger: same sequence, different steps. This book: Expense base validation. Contrast Strategy: template fixes the flow, strategy swaps a piece.
+
+**Iterator** - traverse a collection without exposing its internals.
+This book: playlist order (shuffle permutes an index list, queue untouched), pub-sub offsets are an iterator cursor. Java: `Iterator`, enhanced for-loop.
+
+**Mediator** - objects talk through a central hub instead of to each other.
+Trigger: many-to-many wiring (chat room, air-traffic control). This book: ElevatorController mediates hall calls and cars.
+
+**Memento** - snapshot and restore state without exposing internals (undo stacks; Git's commits are memento-like). Mention; rarely coded in interviews.
+
+### Pattern selection guide (the 10-second version)
+
+| You hear... | Reach for |
+|---|---|
+| "algorithm varies by type/context" | Strategy |
+| "behavior depends on the current state" | State |
+| "notify whoever cares when X happens" | Observer |
+| "third-party/legacy API doesn't fit" | Adapter |
+| "add optional behavior in combinations" | Decorator |
+| "one call spans a big subsystem" | Facade |
+| "expensive object, lazy/remote/permissioned access" | Proxy |
+| "requests need queue/log/undo" | Command |
+| "handlers chain, order composable" | Chain of Responsibility |
+| "same steps, different implementations" | Template Method |
+| "need exactly one" | Singleton (enum) |
+| "construction is messy" | Builder/Factory |
+
+### Anti-patterns to name (senior signal)
+- Pattern for pattern's sake: a Strategy with one implementation is an interface tax.
+- Singleton abuse: static global state hiding dependencies - inject instead.
+- God object / blob: the class that knows everything (SRP's opposite).
+- Spaghetti coupling via concrete `new` everywhere (DIP's opposite).
+
+---
+## F4. UML and Diagrams - The Complete Guide
+
+### Why UML matters in LLD interviews
+
+A class diagram is how you communicate a design before writing code. The interviewer must be able to read your diagram and predict the code you are about to write. So the rule is: notation must be precise, complete enough to be unambiguous, and no more. Sloppy arrows and missing multiplicities read as sloppy thinking; a diagram that takes 10 minutes to draw reads as poor time management.
+
+UML covers many diagram types; LLD interviews need four: **class**, **sequence**, **state**, and occasionally **activity**. This section teaches each one properly.
 
 ---
 
-## F4. UML and Diagrams - How to Draw Each One
+### Class diagram - notation rules
 
-Four diagrams cover 95% of LLD interviews. Steps to draw each, then the Mermaid equivalent (this book's diagrams), then whiteboard tips.
+#### 1. The class box (three compartments)
 
-### Class diagram (the default)
-1. Box per class: name / fields / methods.
-2. Relationships: solid line = association (has-a), hollow triangle = inheritance (is-a), dashed hollow triangle = implements, diamond = composition (filled) or aggregation (hollow).
-3. Multiplicity only when it matters: `1..*`, `0..1`.
-4. Mark interfaces `<<interface>>`; mark enums with their values.
-5. Add only the 3-5 classes of the current flow - not the whole system.
+```
+ -------------------------
+ |        Student        |     <- name (bold, centered)
+ -------------------------
+ | - id: int             |     <- attributes
+ | - name: String        |
+ -------------------------
+ | + enroll(course: int) |     <- operations
+ | + getName(): String   |
+ -------------------------
+```
+
+Top: class name. Middle: attributes. Bottom: operations. If a compartment has nothing, it can be omitted.
+
+#### 2. Visibility markers (memorize)
+
+| Marker | Meaning | Java equivalent |
+|---|---|---|
+| `+` | public | `public` |
+| `-` | private | `private` |
+| `#` | protected | `protected` |
+| `~` | package-private | no keyword |
+
+Visibility markers are not decoration - they are how you show encapsulation on paper. Private fields with public behavior-only methods = good design, visible at a glance.
+
+#### 3. Attribute syntax
+
+```
+visibility name: Type [multiplicity] = defaultValue
+```
+
+Convert Java to diagram mechanically:
+
+```java
+public int age = 21;
+private List<Ticket> tickets = new ArrayList<>();
+```
+becomes:
+```
++ age: int = 21
+- tickets: Ticket [0..*]
+```
+
+Multiplicity `[0..1]` = Optional, `[1]` = exactly one, `[0..*]` = list, `[1..*]` = non-empty list. Show it only where the count is a design decision.
+
+#### 4. Method syntax
+
+```
+visibility name(param1: Type1, param2: Type2): ReturnType
+```
+
+```java
+class Person {
+    private boolean isAdult(int age) { return age >= 18; }
+    public String greet(String name, int times) { /* ... */ }
+}
+```
+becomes:
+```
+- isAdult(age: int): boolean
++ greet(name: String, times: int): String
+```
+`void` return = omit the return type or write `: void`. Static members get the `<<static>>` stereotype or an underline (Mermaid: append `$`).
+
+#### 5. Stereotypes: interface, abstract class, enum
+
+| Kind | Stereotype | Extra rule |
+|---|---|---|
+| Interface | `<<interface>>` above name | only operations (plus constants if any) |
+| Abstract class | `<<abstract>>` above name | name in italics |
+| Enum | `<<enumeration>>` | literals listed in a compartment |
+| Utility | `<<utility>>` | static-only class (Mermaid uses `$` on methods) |
+
+```java
+interface Payable { double calculatePay(); }
+```
+```
+ ---------------------------
+ |      <<interface>>       |
+ |        Payable           |
+ ---------------------------
+ | + calculatePay(): double |
+ ---------------------------
+```
+
+#### 6. The three perspectives (and which one to draw in an interview)
+
+| Perspective | Shows | Audience | Draw when |
+|---|---|---|---|
+| Conceptual | concepts + business relationships only, no members | stakeholders | first 2 minutes of scoping |
+| Specification | interfaces, abstract classes, key public methods, no fields | architects | discussing the design contract |
+| Implementation | full fields, visibility, types, constructors | developers | the diagram you code from |
+
+Interview rule of thumb: sketch conceptual while clarifying requirements (Step 1), then draw the **implementation perspective** for the flow you will code (Step 9). That is the diagram the interviewer checks your code against.
+
+---
+
+### Relationships - all six, with where each appears in this book
+
+#### 1. Association (uses-a) - solid line
+
+One class interacts with another. Add multiplicity and a role label when it removes ambiguity.
+
+```
+Teacher "1" --> "many" Student : teaches
+```
+In this book: `ParkingService --> FeeStrategy`, `RideService --> DriverManager`. In Mermaid: `-->`.
+
+#### 2. Aggregation (has-a, parts outlive the whole) - hollow diamond on the whole
+
+```
+Department o-- Professor
+```
+"A department has professors; close the department, professors remain." If you never draw this one in an interview, that is fine - it is the weakest relationship and often argued about. Mermaid: `o--`.
+
+#### 3. Composition (has-a, parts die with the whole) - filled diamond on the whole
+
+```
+House *-- Room
+Order *-- OrderLine
+```
+"A house owns its rooms; delete the house, the rooms go with it." The test: does the part make sense without the whole? No = composition.
+In this book: `ParkingFloor *-- ParkingSlot`, `Playlist *-- Track` (deleting the playlist does not delete the song file, but the entry does not outlive the list - composition of the entry), `OrderBook`'s price levels. Mermaid: `*--`.
+
+Aggregation vs composition - the one-line rule: **same lifetime as the owner = filled diamond; independent lifetime = hollow diamond.** When unsure, say your assumption out loud.
+
+#### 4. Inheritance (is-a) - solid line, hollow triangle to the parent
+
+```
+Animal <|-- Dog
+```
+Use sparingly (see F1: prefer composition). Legitimate uses in this book: `Expense <|-- EqualExpense/ExactExpense/PercentExpense`, `Transaction <|-- Withdrawal/Deposit`, `VendingMachineState` implementations. Mermaid: `<|--`.
+
+#### 5. Realization (implements) - dashed line, hollow triangle to the interface
+
+```
+Shape <|.. Circle
+```
+The most common arrow in LLD design: every Strategy, State, Adapter, Repository interface. In this book: `RateLimiter <|.. TokenBucketRateLimiter`, `PaymentGatewayAdapter <|.. RazorpayAdapter`. Mermaid: `<|..`.
+
+#### 6. Dependency (uses temporarily) - dashed open arrow
+
+```
+OrderService ..> PaymentService
+```
+Weaker than association: the class does not keep a reference; it uses the other in a method signature or locally. If the field is held long-term, upgrade the arrow to association. Mermaid: `..>`.
+
+#### Summary table (screenshot this)
+
+| Relationship | Meaning | Notation | Mermaid |
+|---|---|---|---|
+| Association | uses / has reference | solid line | `-->` |
+| Aggregation | has parts, parts outlive | hollow diamond on whole | `o--` |
+| Composition | owns parts, parts die with whole | filled diamond on whole | `*--` |
+| Inheritance | is-a | solid + hollow triangle to parent | `<\|--` |
+| Realization | implements | dashed + hollow triangle to interface | `<\|..` |
+| Dependency | temporary use | dashed open arrow | `..>` |
+
+---
+
+### Worked example: Java to class diagram
+
+Given:
+
+```java
+enum OrderStatus { PLACED, PAID, SHIPPED }
+
+interface Payable {
+    boolean pay(double amount);
+}
+
+class Order {
+    private final String id;
+    private final List<OrderLine> lines;
+    private Payable gateway;
+    private OrderStatus status = OrderStatus.PLACED;
+
+    public boolean checkout() { return gateway.pay(total()); }
+    private double total() { /* sum lines */ return 0; }
+}
+```
+
+Draw it in five steps:
+
+1. **Boxes**: `Order` (class), `OrderLine` (class), `Payable` (interface with stereotype), `OrderStatus` (enum with literals).
+2. **Fields** with visibility and multiplicity: `- id: String`, `- lines: OrderLine [0..*]`, `- gateway: Payable [1]`, `- status: OrderStatus`.
+3. **Methods**: `+ checkout(): boolean`, `- total(): double`.
+4. **Relationship 1**: Order holds OrderLine references that die with the order -> `Order *-- OrderLine` (composition).
+5. **Relationship 2**: Order promises to pay through Payable -> `Order ..> Payable` (dependency through the field - association is also defensible; dependency is the safer call for an interface reference you might replace).
 
 ```mermaid
 classDiagram
-    class PaymentGateway {
+    class Order {
+        -String id
+        -List~OrderLine~ lines
+        -Payable gateway
+        -OrderStatus status
+        +checkout(): boolean
+        -total(): double
+    }
+    class OrderLine {
+    }
+    class Payable {
         <<interface>>
-        +charge(amount) boolean
+        +pay(amount: double): boolean
     }
-    class StripeGateway
-    PaymentGateway <|.. StripeGateway
-    class PaymentService {
-        -gateway: PaymentGateway
+    class OrderStatus {
+        <<enumeration>>
+        PLACED
+        PAID
+        SHIPPED
     }
-    PaymentService --> PaymentGateway
+    Order *-- OrderLine
+    Order ..> Payable
 ```
-Whiteboard tip: draw the flow's classes left to right in call order; it doubles as your sequence plan.
 
-### Sequence diagram (for the hardest flow)
-1. Lifelines top to bottom: actor, controller, service(s), repository, external system.
-2. One arrow per call, label with `method(args)`.
-3. Return arrows dashed, label only when the value matters.
-4. `alt/else` blocks for branches (payment approved/declined), `loop` for retries.
-5. Notes for invariants ("debit BEFORE dispense").
+---
+
+### Sequence diagram - notation rules
+
+The class diagram shows structure; the sequence diagram shows one conversation. Draw it for the hardest flow only (Step 3).
+
+**Lifelines** (vertical dashed lines): actor, controller, services, repositories, external systems - in call order, left to right.
+
+**Messages**:
+- Solid arrow, filled head `->>`: synchronous call - caller waits.
+- Dashed arrow `-->>`: return. Label it only when the value matters (fee, slot id).
+- Stick arrow head `->>` in Mermaid is standard; `->` is also accepted.
+
+**Frames**:
+- `alt / else`: branches (payment approved / declined).
+- `opt`: optional step.
+- `loop`: retries, polling.
+- `par`: parallel independent actions (fan-out to listeners).
+
+**Notes**: yellow boxes for invariants - "debit BEFORE dispense". This is where the interviewer sees you think in guarantees, not just steps.
 
 ```mermaid
 sequenceDiagram
     actor U as User
     participant C as ExitController
     participant P as PaymentService
-    U->>C: exit(ticket)
-    C->>P: charge(fee)
-    alt approved
+    participant G as PaymentGatewayAdapter
+    U->>C: exit(ticketId)
+    C->>P: charge(ticketId, fee)
+    loop retry up to 3
+        P->>G: charge(amount)
+        G-->>P: true/false
+    end
+    alt payment approved
         P-->>C: true
+        C-->>U: ExitResult(success)
     else declined
         P-->>C: false
+        C-->>U: ExitResult(failed)
     end
+    Note over C,G: slot released only after payment success
 ```
 
-### State diagram (for lifecycle objects)
-1. Rounded states, one initial (`[*]`), finals where useful.
-2. Arrows labeled `event [guard] / action`.
-3. Write the invariant as a note - this is what interviewers score.
+### State diagram - notation rules
+
+For any object with a lifecycle (order, ticket, signal, ride, driver).
+
+- Rounded rectangles = states; ` [*] ` = initial, ` [*] ` after arrow = final.
+- Arrow label = `event [guard] / action` - all three parts optional, but the guard is where correctness lives.
+- A **note** stating the global invariant ("at most one green") is the highest-value thing on this diagram.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> IDLE
-    IDLE --> HAS_MONEY : insertMoney
-    HAS_MONEY --> DISPENSING : selectItem [funds OK]
-    DISPENSING --> IDLE : dispense
+    [*] --> Placed
+    Placed --> Paid : pay() [amount > 0] / capture()
+    Placed --> Cancelled : cancel()
+    Paid --> Shipped : ship()
+    Shipped --> [*]
+    note right of Placed
+        invariant: an order is
+        Paid or Cancelled,
+        never both
+    end note
 ```
 
-### Activity diagram (rarely needed)
-Flowchart with decision diamonds - use for a multi-actor process (order refund flow). In Mermaid: `flowchart TD` with `{decision}` nodes.
+### Activity diagram (the rare one)
 
-### Which diagram when (30-second chooser)
-| Situation | Draw |
+A flowchart with decision diamonds - for multi-step processes spanning actors (refund flow, escalations). Mermaid: `flowchart TD` with `{decision}` rhombus nodes. Reach for it only if the interviewer asks "how does this process work end to end".
+
+---
+
+### Mermaid cheat sheet (UML -> Mermaid)
+
+| UML element | Mermaid |
 |---|---|
-| "Show me the design" | Class diagram |
-| "Walk me through the flow" | Sequence diagram |
-| Object with states (order, ticket, signal) | State diagram |
-| Multi-step business process | Activity / flowchart |
+| class with compartments | `class Name { -field: Type +method(): T }` |
+| interface / abstract / enum | `<<interface>>`, `<<abstract>>`, `<<enumeration>>` |
+| inheritance | `Parent <\|-- Child` |
+| realization | `Interface <\|.. Impl` |
+| composition | `Whole *-- Part` |
+| aggregation | `Whole o-- Part` |
+| association | `A --> B` (add label with `A --> B : label`) |
+| dependency | `A ..> B` |
+| multiplicity | `A "1" --> "many" B` |
+| sync call / return | `A->>B: call` / `B-->>A: value` |
+| frame (alt/loop/opt) | `alt`, `else`, `loop`, `opt`, `par` blocks |
+| note | `Note over A,B: text` |
+| state | `stateDiagram-v2` with `state` and transitions |
+| static method | append `$` in classDiagram members |
+| generics | `Map~String, Ticket~` |
 
 ---
 
-## F5. Multithreading and Concurrency - The Concepts
+### How to draw under interview pressure
 
-### The vocabulary (define these crisply)
-- **Race condition**: outcome depends on timing of unsynchronized accesses. Fix: make the critical section atomic.
-- **Critical section**: code touching shared state; guard it.
-- **Thread-safe**: correct under any thread interleaving.
-- **Atomicity / visibility / ordering**: the three things that break. `synchronized` gives all three; `volatile` gives visibility + ordering only.
+1. **Two minutes, conceptual**: boxes + relationships only, while talking through entities (Step 2).
+2. **Pick the money flow**: one sequence diagram with alt/loop frames (Step 3). Label invariants in notes.
+3. **One lifecycle object**: state diagram with guards and an invariant note (if the problem has a lifecycle - most do).
+4. **Code time**: implementation-perspective class diagram of only the classes you will actually type. Erase everything else.
 
-### The Java toolkit (ranked by what to reach for)
+**Common mistakes that get dinged**
+- Drawing all 15 classes before writing any code (time management).
+- Arrows with no meaning: every arrow should be one of the six relationships - name which.
+- Missing multiplicities where they matter (1 ticket -> exactly 1 slot).
+- Public fields on domain classes (breaks encapsulation on paper).
+- Sequence diagrams with no frames - branches and retries are where the design lives.
 
-| Tool | Gives | Use when |
+### Five-minute practice
+
+Take `VendingMachine` (section 7) and draw from memory: (a) class diagram with composition `VendingMachine *-- Inventory` and realization `VendingMachineState <|.. HasMoneyState`, (b) sequence diagram of selectItem with an `alt` on sufficient vs insufficient funds, (c) state diagram with guards. Compare against section 7. Repeat with BookMyShow until the six relationships come out without thinking.
+
+---
+## F5. Multithreading and Concurrency - Complete Notes
+
+### 1. The vocabulary (define crisply, in this order)
+- **Race condition**: the outcome depends on the interleaving of unsynchronized accesses. Fix: make the critical section atomic.
+- **Critical section**: code that touches shared mutable state; guard it end-to-end.
+- **Thread-safe**: correct under any possible thread interleaving - say "any", it shows you mean it.
+- The three things concurrency breaks: **atomicity** (interleaved writes lost), **visibility** (a thread sees a stale value), **ordering** (instructions reordered by JIT/CPU). `synchronized` fixes all three; `volatile` fixes visibility + ordering only.
+
+### 2. Creating and running threads
+```java
+// Way 1: implements Runnable - preferred (decouples task from Thread machinery)
+new Thread(() -> work()).start();
+// Way 2: extends Thread - binds task to a thread, harder to pool later
+// Way 3 (production): never new Thread - hand tasks to an ExecutorService (section 41)
+```
+`start()` creates a real OS thread and calls `run()` on it; calling `run()` directly is just a normal call on the current thread - a classic trick question.
+
+**Lifecycle**: NEW -> RUNNABLE -> (BLOCKED on monitor | WAITING | TIMED_WAITING) -> TERMINATED.
+```mermaid
+stateDiagram-v2
+    [*] --> NEW : new Thread()
+    NEW --> RUNNABLE : start()
+    RUNNABLE --> BLOCKED : waits for a monitor lock
+    RUNNABLE --> WAITING : wait(), join()
+    RUNNABLE --> TIMED_WAITING : sleep(ms), wait(ms), join(ms)
+    BLOCKED --> RUNNABLE : lock acquired
+    WAITING --> RUNNABLE : notify(), join complete
+    TIMED_WAITING --> RUNNABLE : timeout, notify()
+    RUNNABLE --> TERMINATED : run() returns
+    TERMINATED --> [*]
+```
+- `sleep(ms)`: holds the lock, just pauses. `wait()`: releases the lock and waits to be notified. Confusing these deadlocks your system.
+- `join()`: caller blocks until the thread finishes (establishes happens-before with the joined thread's work).
+
+### 3. The race, demonstrated
+```java
+class Counter {
+    private int count = 0;
+    void increment() { count++; }              // NOT atomic: read, add, write
+}
+// 2 threads x 10k increments -> result < 20k. Lost updates.
+```
+Fixes, weakest to strongest: `AtomicInteger.incrementAndGet()` -> `synchronized` method -> explicit `ReentrantLock`. Explain *why* each works in vocabulary terms (atomicity).
+
+### 4. synchronized - the baseline
+- Every object has a monitor; `synchronized(obj)` acquires it. Only one thread holds it; others block.
+- `synchronized` method = monitor on `this`; `static synchronized` = monitor on the Class object (different locks - mixing them doesn't exclude each other).
+- Reentrant: the same thread can re-acquire (nested synchronized on the same lock).
+- JVM optimization path: biased -> lightweight -> heavyweight lock; contended locks get expensive (cache-line ping-pong), which is why lock-free and striped structures exist.
+
+### 5. The Lock API - when synchronized is not enough
+```java
+Lock lock = new ReentrantLock();
+lock.lock();
+try { /* critical section */ } finally { lock.unlock(); }   // unlock MUST be in finally
+```
+`ReentrantLock` adds: `tryLock()`/`tryLock(timeout)` (never deadlock - back off instead), `lockInterruptibly()`, optional **fairness** (FIFO acquisition - costs throughput).
+`ReadWriteLock` / `StampedLock`: parallel readers, exclusive writer - section 46 has the full internals and the starvation problem it solves.
+Condition variables (`lock.newCondition()`): the notEmpty/notFull pair in section 42 - `await/signal` are the Lock-API twins of `wait/notify`.
+
+### 6. volatile - the one-keyword trap
+`volatile int x` = every read goes to main memory, every write is flushed. That fixes visibility, nothing else.
+- `volatile` + compound action (`x++`) = still racy. Use `AtomicInteger` or a lock.
+- Without volatile, the JIT may cache a field in a register forever (infinite-loop bugs that disappear under a debugger).
+- Legit uses: shutdown flags, status markers, the reference half of DCL singletons.
+
+### 7. Atomics and CAS - lock-free updates
+`AtomicInteger/AtomicLong/AtomicReference/AtomicBoolean` expose CAS (compare-and-set): succeed only if the value is still what you expected, retry otherwise.
+```java
+while (true) {
+    int cur = tokens.get();
+    if (cur == 0) return false;
+    if (tokens.compareAndSet(cur, cur - 1)) return true;   // no lock held; losers retry
+}
+```
+- Pros: no blocking, no context switches. Cons: retry storms under heavy contention; ABA.
+- **ABA**: value goes A -> B -> A; CAS succeeds though history changed. Harmless for counters; matters for pointer-style structures. Fix: `AtomicStampedReference` (attach a version).
+- `AtomicReferenceFieldUpdater`: CAS on an existing field without a wrapper object - used in the parking lot's slot claim (section 1).
+
+### 8. Concurrent collections - know what to reach for
+
+| Collection | Guarantees | Use when |
 |---|---|---|
-| `synchronized` | mutual exclusion + happens-before | simple guarding |
-| `ReentrantLock` | same + tryLock/timeout/fairness | need lock polling, interrupts |
-| `ReadWriteLock` / `StampedLock` | parallel reads, exclusive writes | read-heavy state |
-| Atomics + CAS | lock-free updates | counters, flags, single refs |
-| `ConcurrentHashMap` / `CopyOnWriteArrayList` | thread-safe collections | shared maps, read-mostly lists |
-| `BlockingQueue` | producer-consumer handoff | any work queue |
-| `volatile` | visibility | flags, `shutdown = true` |
+| `ConcurrentHashMap` | atomic putIfAbsent/compute, lock-striped reads/writes | shared maps; the default choice |
+| `CopyOnWriteArrayList` | reads lock-free, writes copy the array | read-mostly, small (listeners, routing tables) |
+| `BlockingQueue` (Array/Linked, Priority, Delay) | blocking put/take, bounded option | every handoff: pools, crawlers, pipelines |
+| `ConcurrentLinkedQueue` | lock-free queue | unbounded, non-blocking producers |
 
-### volatile - the one-keyword trap
-`volatile int x` guarantees every thread sees the latest x, but `x++` is still read-modify-write and races. `volatile` + compound action = still broken; use AtomicInteger or synchronized. And without volatile, a thread may cache a stale value forever (JIT hoisting).
+`ConcurrentHashMap.compute()` is the atomic read-modify-write you must use for claims (seat holds, idempotency stores) - get-then-put is still a race.
 
-### CAS and the ABA problem
-`compareAndSet(expect, update)` succeeds only if the value is still `expect`. ABA: value goes A -> B -> A; CAS succeeds though the object changed twice. Fix when it matters: `AtomicStampedReference` (version counter). In practice, ABA rarely bites on primitives - mention it and move on.
+### 9. Deadlock - the four conditions, the practical fixes
+Four Coffman conditions: mutual exclusion, hold-and-wait, no preemption, circular wait. All four must hold; break any one.
+```java
+// classic: two locks, opposite order -> circular wait
+synchronized (walletA) { synchronized (walletB) { transfer(); } }   // thread 1
+synchronized (walletB) { synchronized (walletA) { transfer(); } }   // thread 2 -> deadlock
+```
+Fixes, in order of preference:
+1. **Global lock ordering** (always lock the smaller id first - section 19 does exactly this).
+2. `tryLock` with timeout on both, releasing on failure (breaks hold-and-wait).
+3. Coarser single lock (breaks circularity by collapsing the pair).
+Detection in production: thread dumps (`jstack`), `ThreadMXBean.findDeadlockedThreads()`.
 
-### Deadlock - conditions and the practical fix
-Four Coffman conditions (mutual exclusion, hold-and-wait, no preemption, circular wait). Break circular wait: **always acquire locks in the same global order** (section 19 does this for wallet transfers). Also: use `tryLock` with timeout instead of blocking forever, and prefer one lock over two.
+### 10. wait / notify - the discipline
+- Must be inside `synchronized` on the same monitor; must be in a `while` loop (spurious wakeups + stolen signals); always pair `wait` with a state predicate.
+- Prefer `BlockingQueue` and `Condition` over hand-rolled wait/notify in 2026 codebases - but know the discipline; interviews ask you to implement it (section 42).
 
-### Thread lifecycle
-NEW -> RUNNABLE <-> BLOCKED/WAITING/TIMED_WAITING -> TERMINATED. `wait()` releases the monitor; `sleep()` does not. `wait/notify` must be inside synchronized on the same monitor, in a `while` loop (spurious wakeups).
+### 11. Thread pools and the Executor framework
+Never manage raw threads; manage tasks:
+```java
+ExecutorService pool = Executors.newFixedThreadPool(8);        // bounded, fixed
+// or explicit: ThreadPoolExecutor(core, max, keepAlive, unit, queue, rejectionPolicy)
+Future<Result> f = pool.submit(callable);                       // async result handle
+Result r = f.get();                                             // blocks
+pool.shutdown();                                                // drain then stop; never shutdownNow casually
+```
+- ThreadPoolExecutor params: core size, max size, keep-alive, work queue, rejection policy (Abort/CallerRuns/Discard). When the queue is full, the policy decides - backpressure lives here.
+- `Callable` returns + throws; `Runnable` doesn't. `Future.get()` blocks; `isDone/cancel` for control.
+- `CompletableFuture` (Java 8+): composing async stages (`thenApply/thenCompose/allOf`), non-blocking callbacks - mention as the modern tool; the interview depth target is still the pool + queue mechanics (sections 41-43).
 
-### Producer-consumer, thread pools, blocking queues
-One idea, three levels: `wait/notify` handoff -> `BlockingQueue` -> `ExecutorService` (section 41-43). In an interview, name the level you are implementing and why.
+### 12. ThreadLocal and its pitfalls
+Thread-scoped variable: each thread sees its own copy (`MDC` in the logging framework is one).
+- Pitfall 1: thread pools reuse threads - stale values leak into the next task. Always `try { ... } finally { MDC.clear(); }`.
+- Pitfall 2: with `ExecutorService`, the task may run on a different thread - ThreadLocal doesn't propagate (use `InheritableThreadLocal` sparingly or explicit context passing).
 
-### Java Memory Model in one breath
-"JMM defines happens-before: actions before a monitor unlock are visible after a subsequent lock on the same monitor; the same for volatile writes/reads, thread start/join, and thread-pool submit/take. If your synchronization establishes happens-before, your shared state is safe."
+### 13. Java Memory Model - happens-before in one breath
+JMM defines when a write is guaranteed visible to another thread, via **happens-before** edges:
+1. Monitor unlock -> subsequent lock on the same monitor.
+2. volatile write -> subsequent volatile read of the same variable.
+3. Thread start -> actions in the started thread. Thread completion -> `join` returning.
+4. Task submission to an Executor -> the task's execution; task completion -> `Future.get` returning.
+5. `final` field correctly-constructed object -> any thread that sees the reference sees the finals.
+Safe publication = placing the object into shared state via one of these edges (concurrent collections, volatile, locks, static init). If your synchronization establishes happens-before, shared state is safe - say exactly that.
+
+### 14. Design habits that remove concurrency bugs
+- Favor immutability (section 45) - immutable objects need no synchronization.
+- Keep critical sections tiny; prefer atomic single operations (`putIfAbsent`, `compute`) over compound ones.
+- One owner per invariant (single matcher thread, single scheduler thread, one claim site) - then you barely need locks.
+- Defensive copying over shared mutable state when the cost allows.
+- Document the thread-safety policy of every class you write ("thread-confined", "immutable", "synchronized", " guarded by X").
+
+### 15. Quick-fire questions
+1. sleep vs wait? (holds lock vs releases it; static Thread method vs Object method)
+2. Why is StringBuffer "synchronized" and StringBuilder not? (same API, different thread-safety; prefer Builder + local scope)
+3. How do you stop a thread? (cooperative: interrupt + check flag; never Thread.stop())
+4. What does double-checked locking need to be correct? (volatile; otherwise half-published object)
+5. yield()? (hint to scheduler; same thread state, may be ignored)
+6. How many threads? (CPU-bound: ~ cores; IO-bound: more; measure - Little's Law if you want to impress)
 
 ---
 
-## F6. Exception and Error Handling
+---
 
-### Checked vs unchecked vs errors
+## F6. Exception and Error Handling - Complete Notes
 
-| Kind | Extends | Examples | Rule |
-|---|---|---|---|
-| Checked | Exception | IOException, SQLException | caller must handle or declare - recoverable conditions |
-| Unchecked | RuntimeException | IllegalArgumentException, IllegalStateException, NPE | programming bugs - do not catch broadly |
-| Error | Error | OutOfMemoryError, StackOverflowError | JVM-level; never catch |
+### 1. The hierarchy (draw this from memory)
+```
+Throwable
+ |-- Error                  (JVM-level, do NOT catch)
+ |     |-- OutOfMemoryError
+ |     |-- StackOverflowError
+ |     +-- AssertionError
+ +-- Exception
+       |-- RuntimeException            (unchecked)
+       |     |-- NullPointerException
+       |     |-- IllegalArgumentException
+       |     |-- IllegalStateException
+       |     +-- ConcurrentModificationException
+       +-- checked
+             |-- IOException
+             +-- SQLException
+```
+- **Checked**: compile-time enforced; for recoverable external conditions (file missing, DB down).
+- **Unchecked (RuntimeException)**: programming errors; fix the code, don't catch broadly.
+- **Error**: the JVM is broken; catching it buys nothing. (One nuance: catch ThreadDeath/OOSE only at the very top with logging, then re-exit.)
 
-Custom exceptions: `class PaymentDeclinedException extends RuntimeException` - carry context (amount, reason code), not just a message.
-
-### The LLD-level strategy (what interviewers actually score)
-1. **Validate at the boundary**, fail fast with domain exceptions: `IllegalStateException("Cannot start from " + status)`.
-2. **Exceptions for exceptional, Results for expected outcomes.** Payment declined is a business outcome - return `ExitResult(success=false, ...)`, not an exception. Exceptions are for broken assumptions (null ticket, corrupt state).
-3. **Never swallow**: at minimum log + rethrow or translate. Empty catch blocks are an auto-ding.
-4. **try-with-resources** for anything Closeable (appenders, connections, files):
+### 2. try-catch-finally semantics and the traps
+```java
+try { risky(); }
+catch (SpecificException e) { handle(e); }
+catch (IOException | SQLException e) { handle(e); }        // multi-catch
+finally { cleanup(); }                                       // always runs (almost)
+```
+- finally runs whether or not an exception was thrown - except `System.exit()`, JVM crash, or the thread being killed.
+- **Trap: return in finally overrides the return/exception from try** - never return from finally.
+- **Trap: swallowing** - `catch (Exception e) {}` loses the signal; auto-ding. Minimum: log + context, or rethrow.
+- **try-with-resources** (AutoCloseable) - the correct close idiom; handles exceptions in close, suppresses them properly:
 ```java
 try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(path))) {
     w.println(line);
-} // auto-close, exceptions suppressed properly
+}   // close called automatically; close() exceptions attached as suppressed
 ```
-5. **Chain causes**: `throw new ServiceException("exit failed", cause)` - preserve the root cause.
-6. **Retry with backoff for transient failures** (payment gateway, network), bounded (section 1's `processPaymentWithRetry`), and only for idempotent operations or with an idempotency key.
-7. **Circuit breaker** for cascading external failures (gateway down -> fail fast instead of burning threads in retries). Name it; implementing it is an HLD-level follow-up.
+- Precise rethrow (Java 7+): `catch (IOException | SQLException e) { throw e; }` rethrows with the precise type, no `throws Exception` widening.
 
-### The defensive patterns used throughout this book
-- Guard clauses before mutation (every state transition checks preconditions).
-- Null-safety by construction: enums instead of null status, `Optional` for may-absent lookups, sentinel nodes in the LRU list.
-- Fail-safe defaults: traffic controller fails to all-red, vending machine returns coins on unknown state.
+### 3. Throwing discipline - which exception, when
 
----
-
-## F7. Java Essentials for LLD Rounds
-
-| Feature | What to know |
+| Situation | Throw |
 |---|---|
-| Records | immutable data carriers; `record Money(BigDecimal amount)`; shallow immutability caveat (section 45) |
-| Optional | return type for may-absent lookups; never as a field, never `Optional.get()` without check |
-| Streams | for transformations, not side effects; parallel streams only for CPU-heavy, stateless work |
-| Lambdas / functional interfaces | `Function`, `Supplier`, `Predicate` - strategy objects in one line |
-| Sealed classes | `sealed class Transaction permits Withdrawal, Deposit` - exhaustive switches, closed hierarchies |
-| switch expressions | exhaustive, yield values - used everywhere in this book |
-| Generics | `<T extends Comparable<? super T>>` wildcards: PECS (Producer Extends, Consumer Super) |
+| Bad argument value | `IllegalArgumentException` |
+| Method called in an invalid state | `IllegalStateException` |
+| Required reference is null | `Objects.requireNonNull(x, "name")` (throws NPE with message) |
+| Unsupported operation | `UnsupportedOperationException` |
+| Business rule violated | a custom domain exception |
+| External call failed transiently | wrap with context, let retry policy decide |
 
-Two contracts to recite: `equals/hashCode` (F1) and `Comparable/Comparator` (natural order vs custom).
+Custom exceptions (guidelines): extend RuntimeException for domain errors; carry typed context, not just a message; name them as events (`PaymentDeclinedException`, `SeatUnavailableException`).
+```java
+class PaymentDeclinedException extends RuntimeException {
+    private final String reasonCode;
+    PaymentDeclinedException(String reasonCode) { super("payment declined: " + reasonCode); this.reasonCode = reasonCode; }
+    public String reasonCode() { return reasonCode; }
+}
+```
+
+### 4. Exceptions vs Results - the LLD-level decision
+Expected outcomes are not exceptions. Rule of thumb:
+- **Result object** for business outcomes the caller must handle: payment declined, seat taken, no drivers. The flow continues meaningfully.
+- **Exception** for broken assumptions: null ticket, corrupt state, invariant violated - someone must fix code or the world is on fire.
+
+```java
+ExitResult exit = controller.exitVehicle(ticketId);
+if (!exit.success()) { routeToOverrideLane(exit); }      // business path
+// vs
+Ticket t = repo.findById(id).orElseThrow(() -> new TicketNotFoundException(id));  // broken assumption
+```
+Returning `null` or magic values (0, -1, "") is the rejected third option - say so explicitly.
+
+### 5. Error-handling architecture (what you say in Step 7)
+1. **Validate at the boundary** (controller/gateway): fail fast with domain exceptions before touching state.
+2. **Guarded mutations**: every state transition checks preconditions (every `complete()/start()` in this book).
+3. **Retry, bounded, with backoff + jitter**, only for transient failures, only for idempotent operations (or with an idempotency key):
+```java
+for (int attempt = 1; attempt <= MAX; attempt++) {
+    try { return gateway.charge(id, amt); }
+    catch (TransientPaymentException e) { sleep(backoff(attempt) + jitter()); }
+}
+throw new PaymentDeclinedException("RETRIES_EXHAUSTED");
+```
+4. **Circuit breaker** when a dependency is down: CLOSED (normal) -> OPEN (fail fast, skip the call) -> after cooldown HALF-OPEN (probe); recovery closes it. Stops retry storms from burning threads. Name it; implementing one is a bonus.
+5. **Global handler at the edge**: web apps - `@ControllerAdvice` mapping exceptions to status codes; every layer below throws domain exceptions and stays clean.
+6. **Log once, at the boundary, with the cause chain**: `log.error("exit failed for ticket {}", id, e)` - include the throwable, never log-and-rethrow (double logging).
+
+### 6. Anti-patterns (name them when you see them)
+- Swallowing (empty catch).
+- Catching `Throwable`/`Exception` around code that can't throw it.
+- Control flow via exceptions (loop termination with exceptions - use return/Optional).
+- Over-using checked exceptions (every layer re-declares or wraps - fatigue; prefer unchecked for app code).
+- Losing the cause: `throw new ServiceException("failed")` without the original exception chained - always `new X(msg, cause)`.
 
 ---
 
+---
+
+## F7. Java Essentials for LLD Rounds - Complete Notes
+
+### 1. Records (Java 16+) - immutable data carriers
+```java
+record Money(BigDecimal amount, String currency) {
+    Money {                                  // compact constructor - validation, no assignment syntax
+        Objects.requireNonNull(amount);
+        if (amount.signum() < 0) throw new IllegalArgumentException("negative");
+    }
+    Money add(Money o) { return new Money(amount.add(o.amount), currency); }   // new instance, always
+}
+```
+- Free: constructor, accessors (`amount()` not `getAmount()`), equals/hashCode/toString.
+- Caveat 1: **shallow immutability** - if a component is mutable (List, Date), the record is not deeply immutable - defensive-copy in the compact constructor (section 45).
+- Caveat 2: serialization is field-based - renaming components breaks serialized forms.
+
+### 2. Sealed classes + pattern-matching switch (Java 17+)
+```java
+sealed abstract class Transaction permits Withdrawal, Deposit, Transfer {}
+// exhaustive switch with no default:
+return switch (txn) {
+    case Withdrawal w -> handleWithdrawal(w);
+    case Deposit d    -> handleDeposit(d);
+    case Transfer t   -> handleTransfer(t);
+};
+```
+- Sealed hierarchies: closed sets with compiler-checked exhaustiveness - perfect for transactions, states, node types.
+- Pattern matching in switch + `instanceof` (`if (o instanceof Money m)`) removes ceremony; when clauses add guards.
+
+### 3. Optional - the rules
+```java
+public Optional<Ticket> findById(UUID id) { ... }          // as a RETURN type for may-absent
+ticketOpt.orElseThrow(() -> new TicketNotFoundException(id));
+ticketOpt.ifPresentOrElse(this::notify, this::noop);
+```
+- DO: return type, `orElse/orElseGet/orElseThrow`, `ifPresent`, `map/filter`.
+- DON'T: fields, parameters, collections of Optionals; `opt.get()` without `isPresent` (use orElseThrow); `Optional.of(null)` (use `ofNullable`).
+- `orElse(x)` always evaluates x; `orElseGet(() -> x)` is lazy - pass suppliers for expensive defaults.
+
+### 4. Streams - transformations, not loops
+- Intermediate ops (lazy): `filter, map, sorted, distinct, limit`.
+- Terminal ops (eager): `collect, forEach, reduce, count, anyMatch`.
+```java
+List<String> names = orders.stream()
+    .filter(o -> o.status() == PAID)
+    .sorted(comparing(Order::total).reversed())
+    .map(Order::customerName)
+    .toList();                              // Java 16+ unmodifiable
+```
+- Side effects belong outside streams; `forEach` is for actions, not mutation of shared state (concurrency bug generator).
+- `parallelStream()`: shared ForkJoinPool, only for CPU-heavy stateless work on big data - usually a mistake in app code.
+
+### 5. Lambdas and functional interfaces
+Four interfaces cover most cases: `Function<T,R>`, `Predicate<T>`, `Supplier<T>`, `Consumer<T>` (+ primitive variants). Lambdas capture only effectively-final variables (a closure over a changing loop variable won't compile - that's the point).
+Method references as shorthand: `o -> o.getName()` -> `Order::getName`; `() -> new ArrayList<>()` -> `ArrayList::new`.
+
+### 6. Generics and PECS
+Type erasure: generics exist at compile time only (`List<String>` and `List<Integer>` share one class file) - no `new T()`, no `instanceof T`.
+Wildcards: **PECS - Producer Extends, Consumer Super**.
+```java
+void copy(List<? extends Number> src, List<? super Number> dst) {   // read from src, write to dst
+    for (Number n : src) dst.add(n);
+}
+```
+`<? extends T>` = read T, can't add (producer). `<? super T>` = add T, reads as Object (consumer). Bounded type param when you need both: `<T extends Comparable<? super T>>`.
+
+### 7. equals / hashCode / Comparable (recite + code)
+```java
+@Override public boolean equals(Object o) {
+    if (this == o) return true;
+    if (!(o instanceof Money m)) return false;
+    return amount.compareTo(m.amount) == 0 && currency.equals(m.currency);
+}
+@Override public int hashCode() { return Objects.hash(amount, currency); }
+```
+Contract recap (F1): reflexive, symmetric, transitive, consistent; equal objects -> equal hash codes. Use the same fields in both. `Objects.hash` allocates an array - fine for entities, hand-roll in hot paths.
+`Comparator` chains: `Comparator.comparing(Person::age).thenComparing(Person::name).reversed()`.
+
+### 8. Date/Time API (java.time) - use it, not Date/Calendar
+`Instant` (machine timestamp, UTC), `LocalDate/LocalTime/LocalDateTime` (human, no zone), `ZonedDateTime`, `Duration/Period` between them. All immutable and thread-safe.
+Inject a `java.time.Clock` so tests and fee calculations control time (used in section 9's OverdueSpec).
+
+### 9. Small but asked
+- **String immutability + pool**: string literals are interned and shared; immutability makes sharing safe and hashing cacheable. `new String("x")` defeats the pool.
+- **StringBuilder vs StringBuffer**: same API, Builder is not synchronized - prefer it (local scope needs no locking).
+- **var** (Java 10+): local type inference; keeps types honest when obvious (`var map = new HashMap<String, Ticket>()`), avoid when it hides the type's meaning.
+- **Text blocks** (Java 15+): `""" ... """` for multi-line SQL/JSON - cleaner, keeps indentation rules.
+- **enum with behavior**: constants that carry methods (parking lot's `fits()` alternative: put fit logic on the enum) - the OCP-friendly middle ground.
+
+### 10. The Java-8-to-21 toolbelt, mapped to this book
+
+| Feature | Where it earns its place in LLD |
+|---|---|
+| Records | Money, Location, Trade, LogRecord - every value object |
+| Sealed + switch | Transaction/Command/Node hierarchies with exhaustive handling |
+| Optional | Repository lookups, config reads |
+| Streams + collectors | filtering (Specification), aggregation (balances, royalties) |
+| Lambdas/method refs | Strategy one-liners, listeners, comparators |
+| java.time + Clock | fees, due dates, TTLs - testable time |
+| ExecutorService | every "who runs this" question |
+| ConcurrentHashMap.compute | every atomic claim in the book |
+
+---
 *Foundations feed every topic: OOP/SOLID -> Step 6 tables, patterns -> Step 6 decisions, UML -> Steps 2-4 and 8, concurrency -> every atomic claim and lock in Part 3-4, exception strategy -> Step 7 tables.*
 
 ---
@@ -854,7 +1635,7 @@ classDiagram
  class LogManager {
  <<singleton>>
  -Map~String,Logger~ cache
- +getLogger(String) Logger
+ +getLogger(String): Logger
  }
  class LogRecord {
  <<record>>
@@ -877,11 +1658,11 @@ classDiagram
  }
  class Filter {
  <<interface>>
- +decide(LogRecord) Decision
+ +decide(LogRecord): Decision
  }
  class Layout {
  <<interface>>
- +format(LogRecord) String
+ +format(LogRecord): String
  }
  Logger --> LogRecord
  Logger --> Appender
@@ -1184,7 +1965,7 @@ classDiagram
  -List~Direction~ rotation
  -TimingPolicy timing
  -ScheduledExecutorService scheduler
- +requestPhase(Direction) void
+ +requestPhase(Direction): void
  +start()
  -cycle()
  }
@@ -1193,19 +1974,19 @@ classDiagram
  -SignalState state
  +changeState()
  +forceRed()
- +snapshot() SignalSnapshot
+ +snapshot(): SignalSnapshot
  }
  class SignalState {
  <<interface>>
- +next(TrafficSignal) SignalState
- +duration() Duration
- +name() String
+ +next(TrafficSignal): SignalState
+ +duration(): Duration
+ +name(): String
  }
  class TimingPolicy {
  <<interface>>
- +greenTime(Direction) Duration
- +yellowTime() Duration
- +allRedTime() Duration
+ +greenTime(Direction): Duration
+ +yellowTime(): Duration
+ +allRedTime(): Duration
  }
  TrafficController --> TrafficSignal
  TrafficController --> TimingPolicy
@@ -1502,24 +2283,24 @@ classDiagram
  -Inventory inventory
  -ChangeCalculator changeCalculator
  +insertMoney(Coin)
- +selectItem(String code)
+ +selectItem(code: String)
  +cancel()
- +restock(String code, int qty)
+ +restock(code: String, qty: int)
  +setState(VendingMachineState)
  }
  class VendingMachineState {
  <<interface>>
- +insertMoney(Coin)*
- +selectItem(String)*
- +dispense()*
- +refund()*
+ +insertMoney(Coin): *
+ +selectItem(String): *
+ +dispense(): *
+ +refund(): *
  }
  class Inventory {
  -Map~String,Item~ items
  -Map~String,Integer~ counts
- +peek(code) Item
- +take(code) Item
- +count(code) int
+ +peek(code): Item
+ +take(code): Item
+ +count(code): int
  }
  class ChangeCalculator {
  <<interface>>
@@ -1763,7 +2544,7 @@ classDiagram
  -List~Task~ subtasks
  -long version
  +start()
- +block(String reason)
+ +block(reason: String)
  +complete()
  +addSubtask(Task)
  }
@@ -1782,16 +2563,16 @@ classDiagram
  class TaskService {
  -TaskRepository repo
  -List~TaskEventListener~ listeners
- +create(title, creator) Task
+ +create(title, creator): Task
  +assign(taskId, assignee)
  +search(Specification~Task~) List~Task~
  }
  class Specification~T~ {
  <<interface>>
- +isSatisfiedBy(T) boolean
- +and(Specification) Specification
- +or(Specification) Specification
- +not(Specification) Specification
+ +isSatisfiedBy(T): boolean
+ +and(Specification): Specification
+ +or(Specification): Specification
+ +not(Specification): Specification
  }
  TaskService --> TaskRepository
  TaskService --> Specification~Task~
@@ -2109,20 +2890,20 @@ sequenceDiagram
 ```mermaid
 classDiagram
  class Publisher {
- +createTopic(name, partitions) Topic
- +publish(topic, key, payload) long
+ +createTopic(name, partitions): Topic
+ +publish(topic, key, payload): long
  }
  class Topic {
  -String name
  -List~Partition~ partitions
- +route(Message) Partition
+ +route(Message): Partition
  }
  class Partition {
  -List~Message~ log
  -AtomicLong nextOffset
- +append(Message) long
+ +append(Message): long
  +readFrom(offset, max) List~Message~
- +highWatermark() long
+ +highWatermark(): long
  }
  class Consumer {
  -Map~Integer,Long~ offsets
@@ -2369,16 +3150,16 @@ classDiagram
  }
  class BankService {
  <<interface>>
- +authenticate(cardNo, pin) boolean
+ +authenticate(cardNo, pin): boolean
  +debit(cardNo, Money, idempotencyKey)
  +credit(cardNo, Money)
- +balance(cardNo) Money
+ +balance(cardNo): Money
  }
  class Transaction {
  <<abstract>>
  #String cardNumber
  #Money amount
- +execute(BankService, CashDispenser)*
+ +execute(BankService, CashDispenser): *
  }
  class CashDispenser {
  -CashHandler chain
@@ -2388,7 +3169,7 @@ classDiagram
  <<abstract>>
  #CashHandler next
  +setNext(CashHandler)
- +dispense(int, Map)*
+ +dispense(int, Map): *
  }
  ATM --> BankService
  ATM --> CashDispenser
@@ -2665,8 +3446,8 @@ classDiagram
  -String city
  -List~Room~ rooms
  -PricingStrategy pricing
- +availability(RoomType, DateRange) boolean
- +book(Guest, RoomType, DateRange) Booking
+ +availability(RoomType, DateRange): boolean
+ +book(Guest, RoomType, DateRange): Booking
  }
  class Room {
  -int number
@@ -2688,11 +3469,11 @@ classDiagram
  +confirm()
  +checkIn(Room)
  +checkOut(List~Charge~) Invoice
- +cancel(now) Money
+ +cancel(now): Money
  }
  class PricingStrategy {
  <<interface>>
- +price(RoomType, DateRange) Money
+ +price(RoomType, DateRange): Money
  }
  class HousekeepingService {
  +scheduleCleaning(Room)
@@ -3015,8 +3796,8 @@ classDiagram
  <<singleton>>
  -List~Elevator~ fleet
  -DispatchStrategy dispatch
- +requestHall(int floor, Direction)
- +requestCar(Elevator, int dest)
+ +requestHall(floor: int, Direction)
+ +requestCar(Elevator, dest: int)
  }
  class Elevator {
  -int id
@@ -3026,9 +3807,9 @@ classDiagram
  -NavigableSet~Integer~ downStops
  -Queue~Request~ hallCalls
  +addStop(int)
- +canServe(Request) boolean
+ +canServe(Request): boolean
  +run()
- -nextStop() Integer
+ -nextStop(): Integer
  }
  class DispatchStrategy {
  <<interface>>
@@ -3326,8 +4107,8 @@ classDiagram
  +credit(Money)
  }
  class Ledger {
- +post(String txId, LedgerLine... lines)
- +balanceOf(String walletId) Money
+ +post(txId: String, lines: LedgerLine...)
+ +balanceOf(walletId: String): Money
  }
  class LedgerLine {
  <<record>>
@@ -3337,7 +4118,7 @@ classDiagram
  class TransferService {
  -IdempotencyStore idem
  -Ledger ledger
- +transfer(key, from, to, Money) TxResult
+ +transfer(key, from, to, Money): TxResult
  }
  class IdempotencyStore {
  -Map~String,TxResult~ seen
@@ -3624,8 +4405,8 @@ stateDiagram-v2
 ```mermaid
 classDiagram
  class RideService {
- +requestRide(Rider, Location, Location) Ride
- +endTrip(Ride, double surge) Money
+ +requestRide(Rider, Location, Location): Ride
+ +endTrip(Ride, surge: double): Money
  }
  class DriverManager {
  -Map~String,Set~Driver~~ grid
@@ -3642,10 +4423,10 @@ classDiagram
  }
  class FareStrategy {
  <<interface>>
- +compute(Ride, double surge) Money
+ +compute(Ride, surge: double): Money
  }
  class SurgeEngine {
- +multiplier(GridCell) double
+ +multiplier(GridCell): double
  }
  class PaymentService {
  +charge(Rider, Money)
@@ -3887,12 +4668,12 @@ classDiagram
  -Duration durationMs
  -List~BitrateVariant~ variants
  -Lyrics lyrics
- +variantFor(int kbps) BitrateVariant
+ +variantFor(kbps: int): BitrateVariant
  }
  class BitrateVariant {
  -int kbps
  -List~AudioSegment~ segments
- +segmentAt(long tsMs) AudioSegment
+ +segmentAt(tsMs: long): AudioSegment
  }
  class AudioSegment {
  <<record>>
@@ -3911,7 +4692,7 @@ classDiagram
  -PlayerState state
  -List~Integer~ playOrder
  +playNext(bandwidth)
- +seek(long tsMs, bandwidth)
+ +seek(tsMs: long, bandwidth)
  }
  Track --> BitrateVariant
  BitrateVariant --> AudioSegment
@@ -4155,8 +4936,8 @@ classDiagram
         -HashMap map
         -Node head
         -Node tail
-        +get(K key) V
-        +put(K key, V value)
+        +get(key: K): V
+        +put(key: K, value: V)
     }
     class Node {
         -K key
@@ -4243,6 +5024,12 @@ class LRUCache<K, V> {
 
 **Key talking points**: sentinels kill the empty-list edge cases; eviction and insert in one pass; if asked to scale, shard by key hash into N striped LRU caches (each with its own lock) - loses global LRU strictness, say that trade-off.
 
+### Follow-up deep-dives
+
+- LFU hybrid: two maps + a doubly-linked list per frequency gives O(1) get/put with eviction by least-frequently-then-least-recently used - a classic hard follow-up.
+- TTL layer: lazy expiry on access plus a sweeper thread for proactive removal.
+- At scale: shard by key hash into N striped LRU caches; you lose global LRU strictness - state that trade-off before being asked.
+
 ---
 
 ## 28. Rate Limiter
@@ -4256,17 +5043,17 @@ class LRUCache<K, V> {
 classDiagram
     class RateLimiter {
         <<interface>>
-        +allow(String userId) boolean
+        +allow(userId: String): boolean
     }
     class TokenBucketRateLimiter {
         -int capacity
         -double refillPerSec
-        +allow(String userId) boolean
+        +allow(userId: String): boolean
     }
     class SlidingWindowRateLimiter {
         -int maxRequests
         -long windowMillis
-        +allow(String userId) boolean
+        +allow(userId: String): boolean
     }
     class Bucket {
         -AtomicInteger tokens
@@ -4369,6 +5156,12 @@ class SlidingWindowRateLimiter implements RateLimiter {
 
 **Key talking points**: lazy refill means zero background threads; sliding window log is exact but memory-hungry (use approximations at scale); Redis+Lua for multi-instance because check-and-decrement must be atomic.
 
+### Follow-up deep-dives
+
+- Distributed: Redis + Lua script so refill-check-decrement is atomic across instances; a plain GET-then-DECR races.
+- Sliding-window counter approximation (current window count weighted by overlap) when the log's memory cost matters.
+- Priority lanes: premium users get a bigger burst bucket - just a second TokenBucketRateLimiter config injected per tier.
+
 ---
 
 ## 29. Snake & Ladder
@@ -4384,19 +5177,20 @@ classDiagram
         -List players
         -Dice dice
         -int turn
-        +playTurn() Player
+        +playTurn(): Player
     }
     class Board {
         -int size
         -Map jumps
-        +applyJump(int cell) int
-        +isWin(int cell) boolean
+        +applyJump(cell: int): int
+        +isWin(cell: int): boolean
     }
     class Dice {
         <<interface>>
-        +roll() int
+        +roll(): int
     }
-    class FairDice
+    class FairDice {
+    }
     class Player {
         -String name
         -int position
@@ -4485,6 +5279,12 @@ class Game {
 
 **Key talking points**: jump map keeps the engine dumb; exact-100 vs overshoot-bounce is a requirements question - ask it; extend: multiple dice, crooked dice (returns user-chosen value, used in test).
 
+### Follow-up deep-dives
+
+- Crooked dice for testing: an implementation that returns a chosen value - this is why Dice is an interface.
+- Board builder validation: reject two jumps on one cell, a snake head at 100, or a ladder past the board.
+- Extensions that cost nothing: multiple dice summed, largest-roll-wins turns, move undo via a history stack.
+
 ---
 
 ## 30. Tic-Tac-Toe
@@ -4499,13 +5299,13 @@ classDiagram
         -Board board
         -Piece current
         -boolean over
-        +move(int r, int c) boolean
+        +move(r: int, c: int): boolean
     }
     class Board {
         -Piece[][] grid
-        +place(int r, int c, Piece p) boolean
-        +hasWon(int r, int c, Piece p) boolean
-        +isFull() boolean
+        +place(r: int, c: int, p: Piece): boolean
+        +hasWon(r: int, c: int, p: Piece): boolean
+        +isFull(): boolean
     }
     class Piece {
         <<enumeration>>
@@ -4595,6 +5395,12 @@ class Game {
 
 **Key talking points**: last-move win check is the optimization that matters; NxN is free with the loop; follow-up: Connect4 (check k-in-line from last piece, gravity column), or unbeatable AI via minimax.
 
+### Follow-up deep-dives
+
+- NxN falls out of the loop-based win check; Connect4 adds gravity columns and k-in-a-row from the last piece.
+- Unbeatable AI: minimax with alpha-beta pruning on a 3x3 is trivial to sketch - depth-limited evaluation on larger boards.
+- Online multiplayer: one lock or Actor per game instance; server validates every move, client rendering is untrusted.
+
 ---
 
 ## 31. Splitwise
@@ -4609,14 +5415,17 @@ classDiagram
         <<abstract>>
         -User paidBy
         -Money total
-        +shares() Map
+        +shares(): Map
     }
-    class EqualExpense
-    class ExactExpense
-    class PercentExpense
+    class EqualExpense {
+    }
+    class ExactExpense {
+    }
+    class PercentExpense {
+    }
     class BalanceService {
-        +netBalances(List expenses) Map
-        +simplify(Map net) List
+        +netBalances(expenses: List): Map
+        +simplify(net: Map): List
     }
     Expense <|-- EqualExpense
     Expense <|-- ExactExpense
@@ -4678,10 +5487,16 @@ abstract class Expense {
 class EqualExpense extends Expense {
     EqualExpense(User payer, Money total, List<User> parts) { super(payer, total, parts); }
     public Map<User, Money> shares() {
-        BigDecimal each = total.amount().divide(BigDecimal.valueOf(participants.size()), 2, RoundingMode.DOWN);
-        Map<User, Money> m = new HashMap<>();
-        for (User u : participants) m.put(u, new Money(each));
-        validateTotal(m);                       // remainder handled by caller padding or DOWN+pad
+        int n = participants.size();
+        BigDecimal each = total.amount().divide(BigDecimal.valueOf(n), 2, RoundingMode.DOWN);
+        BigDecimal remainder = total.amount().subtract(each.multiply(BigDecimal.valueOf(n)));
+        Map<User, Money> m = new LinkedHashMap<>();
+        for (int i = 0; i < n; i++) {
+            // first participant absorbs the cent-rounding remainder so shares still sum to total
+            BigDecimal amt = (i == 0) ? each.add(remainder) : each;
+            m.put(participants.get(i), new Money(amt));
+        }
+        validateTotal(m);
         return m;
     }
 }
@@ -4706,18 +5521,35 @@ class BalanceService {
 
     /** Greedy simplify: match largest creditor with largest debtor. */
     public List<String> simplify(Map<User, Money> net) {
+        List<Map.Entry<User, Money>> cred = new ArrayList<>(net.entrySet().stream()
+                .filter(e -> e.getValue().amount().signum() > 0)
+                .sorted((a, b) -> b.getValue().amount().compareTo(a.getValue().amount())).toList());
+        List<Map.Entry<User, Money>> debt = new ArrayList<>(net.entrySet().stream()
+                .filter(e -> e.getValue().amount().signum() < 0)
+                .sorted((a, b) -> a.getValue().amount().compareTo(b.getValue().amount())).toList());
         List<String> transfers = new ArrayList<>();
-        List<Map.Entry<User, Money>> cred = net.entrySet().stream()
-                .filter(e -> e.getValue().amount().signum() > 0).toList();
-        List<Map.Entry<User, Money>> debt = net.entrySet().stream()
-                .filter(e -> e.getValue().amount().signum() < 0).toList();
-        // implementation: sort desc, two-pointer match, emit "A pays B Rs.X"
+        int i = 0, j = 0;
+        while (i < cred.size() && j < debt.size()) {   // two-pointer: largest creditor vs largest debtor
+            BigDecimal pay = cred.get(i).getValue().amount()
+                    .min(debt.get(j).getValue().amount().negate());
+            transfers.add(debt.get(j).getKey().name() + " pays " + cred.get(i).getKey().name() + " " + pay);
+            cred.get(i).setValue(new Money(cred.get(i).getValue().amount().subtract(pay)));
+            debt.get(j).setValue(new Money(debt.get(j).getValue().amount().add(pay)));
+            if (cred.get(i).getValue().amount().signum() == 0) i++;
+            if (debt.get(j).getValue().amount().signum() == 0) j++;
+        }
         return transfers;
     }
 }
 ```
 
 **Key talking points**: always validate split sums (the first bug interviewers probe); percent rounding -> allocate remainder to the largest share; simplify-debts greedy is fine - say optimal is NP-hard and this is what Splitwise actually does.
+
+### Follow-up deep-dives
+
+- Multi-currency: store amounts per currency, convert at the expense-date rate, simplify within each currency separately.
+- Group settle vs pairwise net: netPositions within a group collapses O(n^2) pairwise debts into n balances.
+- Optimal simplify is NP-hard; the greedy is what production apps ship - say both sentences.
 
 ---
 
@@ -4733,12 +5565,14 @@ classDiagram
         -String id
         -Map seats
         -Map holdExpiry
-        +hold(String seatId, long ttl) Optional
-        +confirm(String seatId, String token) boolean
-        +releaseExpiredHolds() int
+        +hold(seatId: String, ttl: long): Optional
+        +confirm(seatId: String, token: String): boolean
+        +releaseExpiredHolds(): int
     }
-    class Movie
-    class Screen
+    class Movie {
+    }
+    class Screen {
+    }
     class Booking {
         -String id
         -Show show
@@ -4831,6 +5665,12 @@ class Show {
 
 **Key talking points**: `ConcurrentHashMap.compute` makes hold atomic (no check-then-act); sweeper converts abandoned holds back; same model powers concert/sports ticketing - mention waiting lists and dynamic pricing as extensions.
 
+### Follow-up deep-dives
+
+- Dynamic pricing: demand curve per show (seats sold vs time) behind a PricingStrategy - same seam as surge in section 22.
+- Waiting list: Observer per sold-out show; released seats notify the queue head with a claim window.
+- Multi-seat holds: claim a set atomically (all or nothing) - hold each seat only if every seat in the set is free.
+
 ---
 
 ## 33. Food Delivery (Zomato-style)
@@ -4850,9 +5690,12 @@ classDiagram
         +advance()
         +reject()
     }
-    class Customer
-    class Restaurant
-    class DeliveryAgent
+    class Customer {
+    }
+    class Restaurant {
+    }
+    class DeliveryAgent {
+    }
     class OrderStatus {
         <<enumeration>>
         PLACED
@@ -4935,6 +5778,12 @@ class Order {
 
 **Key talking points**: menu-version snapshot resolves the "price changed between browse and checkout" race; payment lifecycle mirrors order lifecycle (authorize -> capture -> refund); matching agents is the same atomic-claim problem as Uber - say so and the interviewer sees pattern transfer.
 
+### Follow-up deep-dives
+
+- Order batching: one agent, two pickups - route optimization (nearest-insertion is fine to name) before accepting the second order.
+- Promised delivery time: prep time + travel time + buffer, computed at order time; breaches feed the SLA report.
+- Restaurant-side sync: the tablet app and the backend share the same Order state machine - the event stream is the source of truth.
+
 ---
 
 ## 34. Library Management
@@ -4955,16 +5804,16 @@ classDiagram
     }
     class Member {
         -BigDecimal fineBalance
-        +canBorrow() boolean
+        +canBorrow(): boolean
     }
     class Loan {
         -LocalDate issueDate
         -LocalDate dueDate
-        +fine(FinePolicy policy) Money
+        +fine(policy: FinePolicy): Money
     }
     class FinePolicy {
         <<interface>>
-        +compute(LocalDate due, LocalDate returned) Money
+        +compute(due: LocalDate, returned: LocalDate): Money
     }
     Title --> Copy
     Copy --> Loan
@@ -5033,13 +5882,19 @@ class PerDayFine implements FinePolicy {
     private final Money perDay; private final int graceDays; private final Money cap;
     public Money compute(LocalDate due, LocalDate returned) {
         long days = Math.max(0, ChronoUnit.DAYS.between(due, returned) - graceDays);
-        Money fine = perDay.amount().multiply(BigDecimal.valueOf(days)) /* -> Money */;
-        return fine.amount().compareTo(cap.amount()) > 0 ? cap : fine;
+        Money fine = new Money(perDay.amount().multiply(BigDecimal.valueOf(days)));
+        return fine.amount().compareTo(cap.amount()) > 0 ? cap : fine;   // enforce the cap
     }
 }
 ```
 
 **Key talking points**: Title/Copy split mirrors Hotel's type-vs-room - say that explicitly, it shows transfer; reservation queue consumed on return is an Observer (library event -> notify reserver); fine policy injected for different member tiers.
+
+### Follow-up deep-dives
+
+- E-book licenses: digital loans with automatic expiry (a license server revokes access at due date).
+- Inter-library loans: a copy can belong to a branch; reservations queue across the network with transfer costs.
+- Tiered policies: inject different FinePolicy per membership tier - zero changes to Loan.
 
 ---
 
@@ -5054,8 +5909,8 @@ classDiagram
     class UrlShortener {
         -Map byCode
         -Map byLongUrl
-        +shorten(String longUrl) String
-        +resolve(String code) String
+        +shorten(longUrl: String): String
+        +resolve(code: String): String
     }
     class UrlEntry {
         -String code
@@ -5063,7 +5918,7 @@ classDiagram
     }
     class Base62 {
         <<utility>>
-        +encode(long value) String$
+        +encode(value: long): String
     }
     UrlShortener --> UrlEntry
     UrlShortener --> Base62
@@ -5146,6 +6001,12 @@ class UrlShortener {
 
 **Key talking points**: `putIfAbsent` loop = collision retry, no synchronized needed; counter vs random - random for privacy, counter if you want shorter codes and don't care about enumeration; this is the LLD half - the HLD half (routing, caching, DB sharding) is where follow-ups go.
 
+### Follow-up deep-dives
+
+- Key pre-generation: generate code ranges ahead of time so the hot path never contends on a counter or random source.
+- Click analytics: redirect through a logging hop (or async event) feeding a stream for per-link stats.
+- Custom domains: (tenant, code) composite uniqueness instead of global code uniqueness.
+
 ---
 
 ## 36. Stock Exchange
@@ -5157,12 +6018,12 @@ class UrlShortener {
 ```mermaid
 classDiagram
     class MatchingEngine {
-        +match(Order incoming) List
+        +match(incoming: Order): List
     }
     class OrderBook {
         -TreeMap bids
         -TreeMap asks
-        +match(Order incoming) List
+        +match(incoming: Order): List
     }
     class Order {
         -Side side
@@ -5264,6 +6125,13 @@ class OrderBook {
 
 **Key talking points**: price-time priority falls out of TreeMap + FIFO deque; partial fill leaves the resting order in the book; matcher single-threaded per symbol = free serializability (same trick as the traffic controller); follow-ups: market/limit/stop orders, circuit breakers, position limits.
 
+### Follow-up deep-dives
+
+- Stop orders and market-on-open: trigger conditions evaluated against the last trade price by the same matcher loop.
+- Market depth feed (L2 data): publish the first K price levels on every book change - the book already holds them.
+- Circuit breakers: halt matching when price moves beyond X% - a policy object consulted between matches.
+- Positions and margin: derived from trades, checked before order acceptance - never stored on the order itself.
+
 ---
 
 ## 37. Meeting Platform (Zoom-style)
@@ -5279,9 +6147,9 @@ classDiagram
         -Map participants
         -String activeSharer
         -boolean locked
-        +join(Participant p)
-        +muteOther(String actor, String target)
-        +startShare(String userId)
+        +join(p: Participant)
+        +muteOther(actor: String, target: String)
+        +startShare(userId: String)
     }
     class Participant {
         -String userId
@@ -5383,6 +6251,12 @@ class Meeting {
 
 **Key talking points**: single-sharer invariant enforced in exactly one place; role object keeps permission logic out of the meeting flow; "host leaves -> end or promote" is a policy decision - ask the interviewer; media plane = WebRTC SFU, this is the control plane.
 
+### Follow-up deep-dives
+
+- Breakout rooms: Meeting owns child Meetings; broadcast control events down the tree.
+- Recording: a recorder participant subscribes to media and muxes to storage - no special-casing in Meeting.
+- Scaling media: SFU (selective forwarding) over mesh; 50 participants is the mesh ceiling, thousands need an SFU/CDN.
+
 ---
 
 ## 38. Distributed Cache
@@ -5394,12 +6268,12 @@ class Meeting {
 ```mermaid
 classDiagram
     class DistributedCache {
-        +get(String key) byte[]
-        +put(String key, byte[] value)
+        +get(key: String): byte[]
+        +put(key: String, value: byte[])
     }
     class ConsistentHashRing {
         -TreeMap ring
-        +route(String key) CacheNode
+        +route(key: String): CacheNode
     }
     class CacheNode {
         -String id
@@ -5485,6 +6359,12 @@ class DistributedCache {
 
 **Key talking points**: virtual nodes fix distribution skew; replication factor R = write to R clockwise successors, read falls back on miss; "only ~1/N keys remap" is the entire selling point of consistent hashing vs `hash % N`; this is the LLD core - gossip/raft for cluster membership is the distributed-systems follow-up.
 
+### Follow-up deep-dives
+
+- Bounded loads (consistent hashing with a load cap) stops one hot key from melting a single node.
+- Cache stampede: request coalescing (single-flight) so 10k concurrent misses for one key trigger one DB read.
+- Read-through vs write-behind: read-through fills on miss; write-behind acknowledges fast and flushes async - know the durability trade-off.
+
 ---
 
 ## 39. Git (Version Control)
@@ -5498,16 +6378,18 @@ classDiagram
     class Repository {
         -GitObjectStore store
         -Map branches
-        +commit(String message, Map files, List parents) String
-        +merge(Branch other)
+        +commit(message: String, files: Map, parents: List): String
+        +merge(other: Branch)
     }
     class Commit {
         -List parents
         -String treeHash
         -String message
     }
-    class Tree
-    class Blob
+    class Tree {
+    }
+    class Blob {
+    }
     class Branch {
         -String headCommitHash
     }
@@ -5587,17 +6469,50 @@ class Repository {
         if (base.equals(current.headCommitHash)) {                     // fast-forward
             current.headCommitHash = other.headCommitHash; return;
         }
-        String merged = threeWayMerge(base, current.headCommitHash, other.headCommitHash);
-        current.headCommitHash = commit("merge " + other.name, merged, List.of(current.headCommitHash, other.headCommitHash));
+        String mergedTree = threeWayMerge(base, current.headCommitHash, other.headCommitHash);
+        String h = hashOf(("merge " + other.name + mergedTree + Instant.now()).getBytes());
+        store.put(h, new Commit(h, List.of(current.headCommitHash, other.headCommitHash),
+                mergedTree, "me", "merge " + other.name, Instant.now()));
+        current.headCommitHash = h;
     }
 
-    private String findCommonAncestor(String a, String b) { /* BFS on parent DAG */ return a; }
-    private String threeWayMerge(String base, String ours, String theirs) { /* tree diff + conflict markers */ return base; }
+    /** BFS from a collecting all ancestors, then BFS from b until one is found. */
+    private String findCommonAncestor(String a, String b) {
+        Set<String> ancestorsOfA = new HashSet<>();
+        Deque<String> q = new ArrayDeque<>(); q.add(a);
+        while (!q.isEmpty()) {
+            Commit c = store.get(q.poll(), Commit.class);
+            if (ancestorsOfA.add(c.hash())) q.addAll(c.parents());
+        }
+        q.add(b);
+        while (!q.isEmpty()) {
+            Commit c = store.get(q.poll(), Commit.class);
+            if (ancestorsOfA.contains(c.hash())) return c.hash();
+            q.addAll(c.parents());
+        }
+        throw new IllegalStateException("no common ancestor");
+    }
+
+    /** Walk all three trees path by path:
+        same everywhere -> keep; changed on one side only -> take it;
+        changed identically on both -> take it; changed differently -> conflict marker. */
+    private String threeWayMerge(String base, String ours, String theirs) {
+        Tree baseTree = store.get(store.get(base, Commit.class).treeHash(), Tree.class);
+        Tree ourTree = store.get(store.get(ours, Commit.class).treeHash(), Tree.class);
+        Tree theirTree = store.get(store.get(theirs, Commit.class).treeHash(), Tree.class);
+        return mergeTrees(baseTree, ourTree, theirTree);   // recursive path-wise merge
+    }
     private String buildTree(Map<String, byte[]> files) { /* blob per file, tree per dir */ return "treeHash"; }
 }
 ```
 
 **Key talking points**: content addressing gives dedup + tamper detection for free; commits form a DAG, branches are just movable pointers; "snapshot vs delta" is a classic question - snapshots in the model, deltas in storage; conflict markers (`<<<<<<<`) are just the 3-way merge failing to reconcile a hunk.
+
+### Follow-up deep-dives
+
+- Rebase vs merge: rebase replays commits to linearize history (rewrites hashes); merge preserves the DAG - same primitives you already built.
+- Packfiles: storage optimization stores deltas against a base object - snapshots in the model, deltas on disk.
+- The index (staging area): a third tree between HEAD and working dir - commit reads the index, not the files.
 
 ---
 
@@ -5611,18 +6526,18 @@ classDiagram
     class ConfigManager {
         <<enumeration>>
         INSTANCE
-        +get(String key) String
+        +get(key: String): String
     }
     class LazySingleton {
         -LazySingleton()
-        +getInstance()$ LazySingleton
+        +getInstance(): LazySingleton
     }
     class DclSingleton {
         -volatile DclSingleton instance
-        +getInstance()$ DclSingleton
+        +getInstance(): DclSingleton
     }
     class EagerSingleton {
-        +getInstance()$ EagerSingleton
+        +getInstance(): EagerSingleton
     }
 ```
 
@@ -5687,6 +6602,12 @@ class EagerSingleton {
 
 **Key talking points**: enum wins - say it first and explain the reflection/serialization attacks the others suffer; DCL without `volatile` is the classic trap (object published before constructor finishes); Bill Pugh holder idiom is the "clever Java" answer if enums feel like cheating.
 
+### Follow-up deep-dives
+
+- Serialization attack: readResolve can be overridden in a plain singleton class; the enum instance survives it - that is the winning argument.
+- Reflection: Constructor.setAccessible(true) defeats private constructors except for enums - the JVM refuses enum instantiation.
+- Spring's singleton is per-container, not per-JVM - name the difference if the interviewer works in Spring.
+
 ---
 
 ### Step 8: Package Structure and Class Diagram
@@ -5705,14 +6626,15 @@ classDiagram
         -BlockingQueue queue
         -List workers
         -RejectionPolicy rejection
-        +submit(Runnable task)
+        +submit(task: Runnable)
         +shutdown()
     }
     class RejectionPolicy {
         <<interface>>
-        +reject(Runnable task, SimpleThreadPool pool)
+        +reject(task: Runnable, pool: SimpleThreadPool)
     }
-    class AbortPolicy
+    class AbortPolicy {
+    }
     SimpleThreadPool --> RejectionPolicy
     RejectionPolicy <|.. AbortPolicy
 ```
@@ -5791,6 +6713,12 @@ class RejectedExecutionException extends RuntimeException {}
 
 **Key talking points**: catch `Throwable` (not just Exception) around task.run or one Error kills your worker; shutdown vs shutdownNow = drain-queue+interrupt vs stop-everything; then point at `java.util.concurrent.ThreadPoolExecutor` and name its params (core, max, keepAlive, queue, policy) - interviewers love the mapping.
 
+### Follow-up deep-dives
+
+- Core vs max: with an unbounded queue, max pool size never grows - the queue absorbs everything first. Bounded queue + rejection policy is the honest config.
+- ForkJoinPool: work stealing for divide-and-conquer tasks (parallel streams use a shared one).
+- Virtual threads (Java 21): cheap enough that one-thread-per-request replaces pool sizing for IO-heavy apps - throughput story, not an LLD pattern.
+
 ---
 
 ## 42. Blocking Queue
@@ -5804,11 +6732,13 @@ classDiagram
         -Object[] items
         -int capacity
         -int count
-        +put(T t)
-        +take() T
+        +put(t: T)
+        +take(): T
     }
-    class Lock
-    class Condition
+    class Lock {
+    }
+    class Condition {
+    }
     SimpleBlockingQueue --> Lock
     SimpleBlockingQueue --> Condition
 ```
@@ -5886,6 +6816,12 @@ class SimpleBlockingQueue<T> {
 
 **Key talking points**: signal() vs signalAll() - signal is enough here (one producer/one consumer woken per state change) and cheaper; ArrayBlockingQueue uses exactly this shape; the `while` around await is the single most-asked detail.
 
+### Follow-up deep-dives
+
+- offer/poll with timeout: the non-blocking cousins; use them at shutdown and in tryLock-style algorithms.
+- SynchronousQueue: zero-capacity handoff - every put blocks until a take (direct transfer, like Exchanger).
+- Array vs Linked: array is bounded + less allocation; linked unbounded + more GC pressure - pick per workload.
+
 ---
 
 ## 43. Producer-Consumer
@@ -5902,8 +6838,8 @@ classDiagram
         +run()
     }
     class SimpleBlockingQueue {
-        +put(String msg)
-        +take() String
+        +put(msg: String)
+        +take(): String
     }
     Producer --> SimpleBlockingQueue
     Consumer --> SimpleBlockingQueue
@@ -5975,6 +6911,12 @@ public class ProducerConsumerDemo {
 
 **Key talking points**: poison pill per consumer (each needs one); interrupt as the back-up shutdown path; if asked to do it without BlockingQueue: wait/notify with the same notEmpty/notFull discipline.
 
+### Follow-up deep-dives
+
+- Backpressure policy is a design choice: block producers (shed load upstream), drop newest (metrics), or drop oldest (telemetry) - name which and why.
+- The LMAX Disruptor: ring buffer + single consumer beats BlockingQueue by an order of magnitude - this is the logging framework's trick too.
+- Lag as a metric: queue size IS your backlog - alert on it.
+
 ---
 
 ## 44. Web Crawler
@@ -5989,8 +6931,8 @@ classDiagram
         -BlockingQueue frontier
         -Set visited
         -Map lastFetchByHost
-        +crawl(List seeds, int workers)
-        +enqueue(String url)
+        +crawl(seeds: List, workers: int)
+        +enqueue(url: String)
     }
     class Page {
         +String url
@@ -6030,8 +6972,10 @@ Packages: `domain/` (entities and enums), `service/` (business logic and state m
 ### Step 9: Code (Java)
 
 ```java
+record UrlDepth(String url, int depth) {}
+
 class WebCrawler {
-    private final BlockingQueue<String> frontier = new LinkedBlockingQueue<>();
+    private final BlockingQueue<UrlDepth> frontier = new LinkedBlockingQueue<>();
     private final Set<String> visited = ConcurrentHashMap.newKeySet();
     private final Map<String, Long> lastFetchByHost = new ConcurrentHashMap<>();
     private static final long POLITENESS_MS = 1000;
@@ -6043,15 +6987,15 @@ class WebCrawler {
         for (int i = 0; i < workers; i++) {
             Thread t = new Thread(() -> {
                 while (true) {
-                    String url = frontier.poll();                  // null = drained (real: take + poison)
-                    if (url == null) return;
-                    if (!visited.add(normalize(url))) continue;    // dedup, cycle-safe
-                    String host = hostOf(url);
-                    waitPolitely(host);
+                    UrlDepth ud = frontier.poll();                 // null = drained (real: take + poison)
+                    if (ud == null) return;
+                    String url = normalize(ud.url());
+                    if (!visited.add(url)) continue;               // dedup, cycle-safe
+                    waitPolitely(hostOf(url));
                     Page page = fetch(url);                        // network call
-                    if (depthOf(url) < MAX_DEPTH)
+                    if (ud.depth() < MAX_DEPTH)
                         for (String link : page.links())
-                            enqueue(resolve(url, link));
+                            enqueue(resolve(url, link), ud.depth() + 1);
                 }
             });
             t.start(); pool.add(t);
@@ -6059,7 +7003,9 @@ class WebCrawler {
         pool.forEach(t -> { try { t.join(); } catch (InterruptedException ignored) {} });
     }
 
-    private void enqueue(String url) { if (visited.add(url)) frontier.offer(url); }
+    private void enqueue(String url, int depth) {
+        if (visited.add(normalize(url))) frontier.offer(new UrlDepth(url, depth));
+    }
     private void waitPolitely(String host) {
         long now = System.currentTimeMillis();
         Long last = lastFetchByHost.get(host);
@@ -6072,12 +7018,18 @@ class WebCrawler {
     private Page fetch(String url) { /* HTTP GET + parse */ return new Page(url, List.of()); }
     private String normalize(String u) { return u.split("#")[0]; }         // strip fragment
     private String resolve(String base, String link) { /* new URL(base, link).toString() */ return link; }
-    private String hostOf(String u) { return u; }
-    private int depthOf(String u) { /* encoded in queue item in production */ return 0; }
+    private String hostOf(String u) { return java.net.URI.create(u).getHost(); }
 }
 ```
 
 **Key talking points**: `visited.add()` atomicity = no URL fetched twice; frontier separates discovery from fetch so workers never block each other; scale-up path: priority frontier (bFS by depth), Bloom filter, distributed frontier (Kafka), per-domain queues for politeness.
+
+### Follow-up deep-dives
+
+- robots.txt and sitemaps: fetched per host, cached, honored before any URL from that host.
+- Distributed frontier: per-domain queues (politeness) keyed by host hash, workers pull from any queue - this is Kafka's textbook use case.
+- Content dedup: SimHash for near-duplicate pages (mirror sites) beyond exact-URL dedup.
+- JS-rendered pages: headless-browser tier for the minority of sites that need it - keep the fast path pure HTTP.
 
 ---
 
@@ -6099,9 +7051,9 @@ classDiagram
         -final String name
         -final Date joiningDate
         -final List skills
-        +getName() String
-        +getJoiningDate() Date
-        +getSkills() List
+        +getName(): String
+        +getJoiningDate(): Date
+        +getSkills(): List
     }
     note for Employee "final class, no setters, copies in and out"
 ```
@@ -6151,6 +7103,12 @@ final class Employee {
 ```
 
 **Key talking points**: `java.util.Date` is the classic trap - prefer `LocalDate` (immutable) in modern code; Java records give shallow immutability (fields final) but components can still be mutable objects - records are not a free pass; why bother: trivially thread-safe, safe to cache/share, valid as HashMap keys (hash never changes). String, Integer, BigDecimal, LocalDate are your examples.
+
+### Follow-up deep-dives
+
+- Deep immutability: a record holding a List is not immutable - copy in the constructor and wrap unmodifiable (the Employee example does both).
+- Immutability + concurrency: no locks, no defensive copies, safe as HashMap keys - the cheapest thread safety there is.
+- Value Objects vs Entities: Money is a value object (identity = content); Order is an entity (identity = id) - knowing the difference shapes your equals/hashCode.
 
 ---
 
@@ -6247,6 +7205,12 @@ class SimpleReadWriteLock {
 **Key talking points**: without `writeRequests`, a writer could starve under a reader stream; downgrading is safe because the thread already holds exclusive access; upgrading deadlock is the classic follow-up trap; `StampedLock` improves read throughput via optimistic reads (no lock at all when uncontended) at the cost of reentrancy.
 
 ---
+
+### Follow-up deep-dives
+
+- StampedLock optimistic read: tryOptimisticRead() costs nothing when uncontended, then validate(); the upgrade path (write lock) is the fallback - but it is not reentrant.
+- Downgrade is safe, upgrade deadlocks: two readers both upgrading wait on each other while holding read - state the rule and the workaround (release, acquire write, re-verify).
+- Cache striping: 64 independent locks keyed by hash - near-readwrite-lock throughput without the complexity for maps.
 
 ---
 
