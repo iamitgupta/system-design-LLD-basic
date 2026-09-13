@@ -1249,7 +1249,86 @@ Inject a `java.time.Clock` so tests and fee calculations control time (used in s
 
 **Edge cases (Step 7 owns the full table)**: payment failure, lost ticket, clock skew, vehicle type incompatible with assigned slot.
 
-### Step 2: Core Entities
+### Step 2: Core Entities and Relationships (class diagram below)
+
+```mermaid
+classDiagram
+    class Vehicle {
+        -String licensePlate
+        -VehicleType type
+    }
+    class VehicleType {
+        <<enumeration>>
+        BIKE
+        CAR
+        EV
+        TRUCK
+    }
+    class ParkingSlot {
+        -String id
+        -SlotType type
+        -int floorNumber
+        -boolean occupied
+        +claim() boolean
+        +release()
+        +fits(VehicleType vt) boolean
+    }
+    class SlotType {
+        <<enumeration>>
+        BIKE
+        COMPACT
+        LARGE
+        EV
+    }
+    class Floor {
+        -int floorNumber
+        -List slots
+        +freeSpots() Stream
+    }
+    class Ticket {
+        -UUID id
+        -String plate
+        -String slotId
+        -Instant entryTime
+        -boolean active
+        +deactivate()
+    }
+    class PricingRule {
+        -VehicleType type
+        -double ratePerHour
+        -double dailyCap
+    }
+    class ParkingLot {
+        -List floors
+        -SpotAssignmentStrategy assignment
+        -FeeStrategy feeStrategy
+        +park(Vehicle v) Ticket
+        +exit(Ticket t, PaymentStrategy p) Receipt
+    }
+    class SpotAssignmentStrategy {
+        <<interface>>
+        +findSpot(List floors, Vehicle v) Optional
+    }
+    class FeeStrategy {
+        <<interface>>
+        +compute(Instant entry, Instant exit, VehicleType t) Money
+    }
+    class PaymentStrategy {
+        <<interface>>
+        +authorize(Money amount) boolean
+    }
+    ParkingLot --> Floor
+    ParkingLot --> SpotAssignmentStrategy
+    ParkingLot --> FeeStrategy
+    Floor --> ParkingSlot
+    ParkingSlot --> Vehicle
+    ParkingLot ..> Ticket
+    ParkingLot ..> PricingRule
+    Ticket ..> ParkingSlot
+    ParkingLot ..> PaymentStrategy
+    Vehicle --> VehicleType
+    ParkingSlot --> SlotType
+```
 
 | Entity | Key attributes |
 |---|---|
@@ -1386,6 +1465,8 @@ com.parkinglot
 ## 2. Parking Lot - Code
 
 ### Step 9: Code (Java)
+
+> Class diagram, interaction flows, and edge cases: see the **Design** section above. This section is the Step 9 code.
 
 ```java
 // ============================ domain ============================
@@ -1731,6 +1812,8 @@ Packages: `domain/` (entities and enums), `service/` (business logic and state m
 
 ### Step 9: Code (Java)
 
+> Class diagram, interaction flows, and edge cases: see the **Design** section above. This section is the Step 9 code.
+
 ```java
 enum Level { TRACE(0), DEBUG(1), INFO(2), WARN(3), ERROR(4), FATAL(5);
     final int priority; Level(int p){ priority = p; }
@@ -2030,6 +2113,8 @@ Packages: `domain/` (entities and enums), `service/` (business logic and state m
 ## 6. Traffic Signal System - Code
 
 ### Step 9: Code (Java)
+
+> Class diagram, interaction flows, and edge cases: see the **Design** section above. This section is the Step 9 code.
 
 ```java
 enum Direction { NORTH, SOUTH, EAST, WEST }
@@ -2343,6 +2428,8 @@ Packages: `domain/` (entities and enums), `service/` (business logic and state m
 
 ### Step 9: Code (Java)
 
+> Class diagram, interaction flows, and edge cases: see the **Design** section above. This section is the Step 9 code.
+
 ```java
 enum Coin { PENNY(1), NICKEL(5), DIME(10), QUARTER(25);
     final int cents; Coin(int c){ cents = c; } }
@@ -2648,6 +2735,8 @@ Packages: `domain/` (entities and enums), `service/` (business logic and state m
 
 ### Step 9: Code (Java)
 
+> Class diagram, interaction flows, and edge cases: see the **Design** section above. This section is the Step 9 code.
+
 ```java
 enum TaskStatus { TODO, IN_PROGRESS, BLOCKED, DONE, CANCELLED }
 enum Priority { LOW, MEDIUM, HIGH, URGENT }
@@ -2950,6 +3039,8 @@ Packages: `domain/` (entities and enums), `service/` (business logic and state m
 
 ### Step 9: Code (Java)
 
+> Class diagram, interaction flows, and edge cases: see the **Design** section above. This section is the Step 9 code.
+
 ```java
 record Message(String id, String key, byte[] payload, Instant timestamp) {
     static Message of(String key, byte[] p){
@@ -3235,6 +3326,8 @@ Packages: `domain/` (entities and enums), `service/` (business logic and state m
 ## 14. ATM Machine - Code
 
 ### Step 9: Code (Java)
+
+> Class diagram, interaction flows, and edge cases: see the **Design** section above. This section is the Step 9 code.
 
 ```java
 enum Denomination { HUNDRED(100), FIFTY(50), TWENTY(20), TEN(10);
@@ -3557,6 +3650,8 @@ Packages: `domain/` (entities and enums), `service/` (business logic and state m
 
 ### Step 9: Code (Java)
 
+> Class diagram, interaction flows, and edge cases: see the **Design** section above. This section is the Step 9 code.
+
 ```java
 enum RoomType { SINGLE, DOUBLE, DELUXE, SUITE }
 
@@ -3877,6 +3972,8 @@ Packages: `domain/` (entities and enums), `service/` (business logic and state m
 
 ### Step 9: Code (Java)
 
+> Class diagram, interaction flows, and edge cases: see the **Design** section above. This section is the Step 9 code.
+
 ```java
 enum Direction { UP, DOWN, NONE }
 record Request(int floor, Direction direction) {}
@@ -4171,6 +4268,34 @@ flowchart TD
  Q4 -->|needs strong consistency| ZK["ZooKeeper / etcd lease"]
 ```
 
+### Lock taxonomy (Java, one diagram)
+
+```mermaid
+classDiagram
+    class Lock {
+        <<interface>>
+        +lock()
+        +unlock()
+        +tryLock() boolean
+    }
+    class ReentrantLock {
+        -boolean fair
+    }
+    class ReadWriteLock {
+        <<interface>>
+        +readLock() Lock
+        +writeLock() Lock
+    }
+    class ReentrantReadWriteLock
+    class StampedLock {
+        +tryOptimisticRead() long
+        +validate(long stamp) boolean
+    }
+    Lock <|.. ReentrantLock
+    ReadWriteLock <|.. ReentrantReadWriteLock
+    note for Lock "synchronized keyword = implicit monitor lock, same guarantees"
+```
+
 ### Java lock comparison (know the table)
 
 | Mechanism | Fair | Reentrant | Try/timeout | Read perf | Notes |
@@ -4202,6 +4327,11 @@ flowchart TD
 ---
 
 ## 21. Digital Wallet - Code
+
+### Step 9: Code (Java)
+
+> Class diagram, interaction flows, and edge cases: see the **Design** section above. This section is the Step 9 code.
+
 
 ```java
 enum TxStatus { INITIATED, COMPLETED, FAILED, REVERSED, PENDING }
@@ -4465,6 +4595,8 @@ Packages: `domain/` (entities and enums), `service/` (business logic and state m
 ## 23. Ride Booking App - Code
 
 ### Step 9: Code (Java)
+
+> Class diagram, interaction flows, and edge cases: see the **Design** section above. This section is the Step 9 code.
 
 ```java
 record Location(double lat, double lng) {
@@ -4749,6 +4881,31 @@ Packages: `domain/` (entities and enums), `service/` (business logic and state m
 
 ### Step 9: Code (Java)
 
+### The manifest model (what the protocols describe)
+
+```mermaid
+classDiagram
+    class MasterPlaylist {
+        -List variants
+    }
+    class VariantPlaylist {
+        -int bandwidthKbps
+        -List segments
+    }
+    class Segment {
+        -int index
+        -long startMs
+        -String cdnUrl
+    }
+    class DashMpd {
+        -List representations
+    }
+    MasterPlaylist --> VariantPlaylist
+    VariantPlaylist --> Segment
+    DashMpd --> Segment
+    note for MasterPlaylist "HLS: m3u8 - DASH: MPD - both = renditions plus segments"
+```
+
 ### Comparison matrix
 
 | Protocol | Transport | Latency | Adaptive | Native support | Typical use |
@@ -4786,6 +4943,11 @@ Buffer-based + throughput-based hysteresis prevents oscillation.
 ---
 
 ## 26. Music Streaming Platform - Code
+
+### Step 9: Code (Java)
+
+> Class diagram, interaction flows, and edge cases: see the **Design** section above. This section is the Step 9 code.
+
 
 ```java
 record AudioSegment(int index, long startMs, long durationMs, String cdnUrl) {}
