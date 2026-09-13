@@ -91,114 +91,114 @@ Pick the LOWEST rung that satisfies known requirements; show you can climb when 
 
 ```mermaid
 flowchart LR
-    subgraph Entry
-        E1[Entry Kiosk]
-    end
-    subgraph Exit
-        X1[Exit Kiosk]
-    end
-    subgraph Core
-        PL[ParkingLot<br/>orchestrator]
-        SA[SpotAssignment<br/>Strategy]
-        FC[FeeCalculator<br/>Strategy]
-        INV[Inventory<br/>floors → spots]
-        PAY[PaymentGateway<br/>interface]
-    end
-    E1 -->|park| PL
-    X1 -->|exit ticket, payment| PL
-    PL --> SA
-    PL --> FC
-    PL --> INV
-    PL --> PAY
-    PAY -.->|impl| CASH[Cash]
-    PAY -.->|impl| CARD[Card]
-    PAY -.->|impl| UPI[UPI]
-    PL -.->|events| BOARD[DisplayBoard<br/>Observer]
+ subgraph Entry
+ E1["Entry Kiosk"]
+ end
+ subgraph Exit
+ X1["Exit Kiosk"]
+ end
+ subgraph Core
+ PL["ParkingLot orchestrator"]
+ SA["SpotAssignment Strategy"]
+ FC["FeeCalculator Strategy"]
+ INV["Inventory floors → spots"]
+ PAY["PaymentGateway interface"]
+ end
+ E1 -->|park| PL
+ X1 -->|exit ticket, payment| PL
+ PL --> SA
+ PL --> FC
+ PL --> INV
+ PL --> PAY
+ PAY -.->|impl| CASH["Cash"]
+ PAY -.->|impl| CARD["Card"]
+ PAY -.->|impl| UPI["UPI"]
+ PL -.->|events| BOARD["DisplayBoard Observer"]
 ```
 
 ### Class diagram
 
 ```mermaid
 classDiagram
-    class ParkingLot {
-        -List~ParkingFloor~ floors
-        -SpotAssignmentStrategy assignment
-        -FeeStrategy feeStrategy
-        +park(Vehicle) Ticket
-        +exit(Ticket, PaymentStrategy) Receipt
-        +availabilitySnapshot() Map
-    }
-    class ParkingFloor {
-        -int floorNumber
-        -List~ParkingSpot~ spots
-        +freeSpots(SpotType) List~ParkingSpot~
-        +freeCount(SpotType) long
-    }
-    class ParkingSpot {
-        -String id
-        -SpotType type
-        -Vehicle parked
-        +assign(Vehicle) boolean
-        +vacate()
-        +fits(VehicleType) boolean
-    }
-    class Vehicle {
-        <<abstract>>
-        #String licensePlate
-        #VehicleType type
-    }
-    class Ticket {
-        -String id
-        -LocalDateTime entryTime
-        -ParkingSpot spot
-        -Vehicle vehicle
-    }
-    class SpotAssignmentStrategy {
-        <<interface>>
-        +findSpot(floors, vehicle) Optional~ParkingSpot~
-    }
-    class FeeStrategy {
-        <<interface>>
-        +compute(entry, exit, VehicleType) Money
-    }
-    class PaymentStrategy {
-        <<interface>>
-        +pay(Money) boolean
-    }
-    ParkingLot --> ParkingFloor
-    ParkingLot --> SpotAssignmentStrategy
-    ParkingLot --> FeeStrategy
-    ParkingFloor --> ParkingSpot
-    ParkingSpot --> Vehicle
-    Ticket --> ParkingSpot
-    Ticket --> Vehicle
+ class ParkingLot {
+ -List~ParkingFloor~ floors
+ -SpotAssignmentStrategy assignment
+ -FeeStrategy feeStrategy
+ +park(Vehicle) Ticket
+ +exit(Ticket, PaymentStrategy) Receipt
+ +availabilitySnapshot() Map
+ }
+ class ParkingFloor {
+ -int floorNumber
+ -List~ParkingSpot~ spots
+ +freeSpots(SpotType) List~ParkingSpot~
+ +freeCount(SpotType) long
+ }
+ class ParkingSpot {
+ -String id
+ -SpotType type
+ -Vehicle parked
+ +assign(Vehicle) boolean
+ +vacate()
+ +fits(VehicleType) boolean
+ }
+ class Vehicle {
+ <<abstract>>
+ #String licensePlate
+ #VehicleType type
+ }
+ class Ticket {
+ -String id
+ -LocalDateTime entryTime
+ -ParkingSpot spot
+ -Vehicle vehicle
+ }
+ class SpotAssignmentStrategy {
+ <<interface>>
+ +findSpot(floors, vehicle) Optional~ParkingSpot~
+ }
+ class FeeStrategy {
+ <<interface>>
+ +compute(entry, exit, VehicleType) Money
+ }
+ class PaymentStrategy {
+ <<interface>>
+ +pay(Money) boolean
+ }
+ ParkingLot --> ParkingFloor
+ ParkingLot --> SpotAssignmentStrategy
+ ParkingLot --> FeeStrategy
+ ParkingFloor --> ParkingSpot
+ ParkingSpot --> Vehicle
+ Ticket --> ParkingSpot
+ Ticket --> Vehicle
 ```
 
 ### Key sequence - exit flow
 
 ```mermaid
 sequenceDiagram
-    actor Driver
-    participant X as Exit Kiosk
-    participant PL as ParkingLot
-    participant FC as FeeStrategy
-    participant GW as PaymentGateway
-    participant DB as DisplayBoard
+ actor Driver
+ participant X as Exit Kiosk
+ participant PL as ParkingLot
+ participant FC as FeeStrategy
+ participant GW as PaymentGateway
+ participant DB as DisplayBoard
 
-    Driver->>X: ticket + payment method
-    X->>PL: exit(ticket, cardPayment)
-    PL->>FC: compute(entry, now, CAR)
-    FC-->>PL: Money(₹140)
-    PL->>GW: authorize(₹140)
-    alt payment approved
-        GW-->>PL: true
-        PL->>PL: spot.vacate() [synchronized]
-        PL->>DB: notify(SPOT_FREED, floor2, COMPACT)
-        PL-->>X: Receipt
-    else declined
-        GW-->>PL: false
-        PL-->>X: PaymentRequiredException
-    end
+ Driver->>X: ticket + payment method
+ X->>PL: exit(ticket, cardPayment)
+ PL->>FC: compute(entry, now, CAR)
+ FC-->>PL: Money(Rs.140)
+ PL->>GW: authorize(Rs.140)
+ alt payment approved
+ GW-->>PL: true
+ PL->>PL: spot.vacate() [synchronized]
+ PL->>DB: notify(SPOT_FREED, floor2, COMPACT)
+ PL-->>X: Receipt
+ else declined
+ GW-->>PL: false
+ PL-->>X: PaymentRequiredException
+ end
 ```
 
 ### Key design decisions
@@ -429,98 +429,98 @@ class PaymentDeclinedException extends RuntimeException { PaymentDeclinedExcepti
 
 ```mermaid
 flowchart LR
-    subgraph AppThreads
-        T1[Thread-1] --> L1[Logger.info]
-        T2[Thread-2] --> L1
-    end
-    L1 -->|level check + build LogRecord| Q[BlockingQueue<br/>bounded]
-    Q --> W[AsyncWorker<br/>single thread]
-    W --> F1[Filter: Level]
-    F1 --> F2[Filter: LoggerName]
-    F2 --> A1[ConsoleAppender]
-    F2 --> A2[FileAppender<br/>rolling]
-    F2 --> A3[KafkaAppender]
-    A1 --> LY[Layout: Pattern]
-    A2 --> LY[Layout: Pattern]
-    A3 --> LY[Layout: Pattern]
+ subgraph AppThreads
+ T1["Thread-1"] --> L1["Logger.info"]
+ T2["Thread-2"] --> L1
+ end
+ L1 -->|level check + build LogRecord| Q["BlockingQueue bounded"]
+ Q --> W["AsyncWorker single thread"]
+ W --> F1["Filter: Level"]
+ F1 --> F2["Filter: LoggerName"]
+ F2 --> A1["ConsoleAppender"]
+ F2 --> A2["FileAppender rolling"]
+ F2 --> A3["KafkaAppender"]
+ A1 --> LY["Layout: Pattern"]
+ A2 --> LY["Layout: Pattern"]
+ A3 --> LY["Layout: Pattern"]
 ```
 
 ### Class diagram
 
 ```mermaid
 classDiagram
-    class Logger {
-        -String name
-        -Level threshold
-        -List~Appender~ appenders
-        +info(String)
-        +debug(String)
-        +error(String, Throwable)
-        -log(Level, String, Throwable)
-    }
-    class LogManager {
-        <<singleton>>
-        -Map~String,Logger~ cache
-        +getLogger(String) Logger
-    }
-    class LogRecord {
-        <<record>>
-        +Level level
-        +String loggerName
-        +String message
-        +Instant timestamp
-        +String threadName
-        +Throwable error
-    }
-    class Appender {
-        <<interface>>
-        +append(LogRecord)
-        +close()
-    }
-    class AsyncAppender {
-        -BlockingQueue queue
-        -Appender delegate
-        -Thread worker
-    }
-    class Filter {
-        <<interface>>
-        +decide(LogRecord) Decision
-    }
-    class Layout {
-        <<interface>>
-        +format(LogRecord) String
-    }
-    Logger --> LogRecord
-    Logger --> Appender
-    AsyncAppender --> Appender : delegates
-    Appender --> Filter
-    Appender --> Layout
-    LogManager --> Logger : creates/caches
+ class Logger {
+ -String name
+ -Level threshold
+ -List~Appender~ appenders
+ +info(String)
+ +debug(String)
+ +error(String, Throwable)
+ -log(Level, String, Throwable)
+ }
+ class LogManager {
+ <<singleton>>
+ -Map~String,Logger~ cache
+ +getLogger(String) Logger
+ }
+ class LogRecord {
+ <<record>>
+ +Level level
+ +String loggerName
+ +String message
+ +Instant timestamp
+ +String threadName
+ +Throwable error
+ }
+ class Appender {
+ <<interface>>
+ +append(LogRecord)
+ +close()
+ }
+ class AsyncAppender {
+ -BlockingQueue queue
+ -Appender delegate
+ -Thread worker
+ }
+ class Filter {
+ <<interface>>
+ +decide(LogRecord) Decision
+ }
+ class Layout {
+ <<interface>>
+ +format(LogRecord) String
+ }
+ Logger --> LogRecord
+ Logger --> Appender
+ AsyncAppender --> Appender : delegates
+ Appender --> Filter
+ Appender --> Layout
+ LogManager --> Logger : creates/caches
 ```
 
 ### Sequence - the async handoff (THE diagram to draw)
 
 ```mermaid
 sequenceDiagram
-    participant T as App Thread
-    participant LG as Logger
-    participant Q as BlockingQueue(cap 10k)
-    participant W as Worker Thread
-    participant C as ConsoleAppender
+ participant T as App Thread
+ participant LG as Logger
+ participant Q as BlockingQueue(cap 10k)
+ participant W as Worker Thread
+ participant C as ConsoleAppender
 
-    T->>LG: info("order placed")
-    LG->>LG: level.isAtLeast(INFO)? yes
-    LG->>Q: offer(record) - non-blocking
-    alt queue not full
-        Q-->>LG: true (returns in ~ns)
-    else full
-        Q-->>LG: false → drop + incrementDroppedCounter
-    end
-    Note over T: app thread NEVER blocked by I/O
-    W->>Q: take() (blocks until record)
-    Q-->>W: record
-    W->>C: append(record)
-    C->>C: layout.format → System.out
+ T->>LG: info("order placed")
+ LG->>LG: level.isAtLeast(INFO)? yes
+ LG->>Q: offer(record) - non-blocking
+ alt queue not full
+ Q-->>LG: true (returns in ~ns)
+ else full
+ Q-->>LG: false → drop + incrementDroppedCounter
+ end
+ Note over T: app thread NEVER blocked by I/O
+ W->>Q: take() (blocks until record)
+ Q-->>W: record
+ W->>C: append(record)
+ C->>C: layout.format → System.out
 ```
 
 ### Key design decisions
@@ -741,66 +741,66 @@ final class LogManager {
 
 ```mermaid
 stateDiagram-v2
-    [*] --> AllRed
-    AllRed --> Green_N : N timer expires
-    Green_N --> Yellow_N : greenDuration(N) elapsed
-    Yellow_N --> AllRed : 3s elapsed
-    AllRed --> Green_E : buffer elapsed
-    Green_E --> Yellow_E : greenDuration(E) elapsed
-    Yellow_E --> AllRed : 3s elapsed
-    AllRed --> Green_S : buffer elapsed
-    Green_S --> Yellow_S : greenDuration(S)
-    Yellow_S --> AllRed : 3s
-    AllRed --> Green_W : buffer
-    Green_W --> Yellow_W : greenDuration(W)
-    Yellow_W --> AllRed : 3s
-    note right of AllRed
-        INVARIANT: all signals red
-        duration = ALL_RED_BUFFER (2s)
-    end note
+ [*] --> AllRed
+ AllRed --> Green_N : N timer expires
+ Green_N --> Yellow_N : greenDuration(N) elapsed
+ Yellow_N --> AllRed : 3s elapsed
+ AllRed --> Green_E : buffer elapsed
+ Green_E --> Yellow_E : greenDuration(E) elapsed
+ Yellow_E --> AllRed : 3s elapsed
+ AllRed --> Green_S : buffer elapsed
+ Green_S --> Yellow_S : greenDuration(S)
+ Yellow_S --> AllRed : 3s
+ AllRed --> Green_W : buffer
+ Green_W --> Yellow_W : greenDuration(W)
+ Yellow_W --> AllRed : 3s
+ note right of AllRed
+ INVARIANT: all signals red
+ duration = ALL_RED_BUFFER (2s)
+ end note
 ```
 
 ### Class diagram
 
 ```mermaid
 classDiagram
-    class TrafficController {
-        <<singleton>>
-        -Map~Direction,TrafficSignal~ signals
-        -List~Direction~ rotation
-        -TimingPolicy timing
-        -ScheduledExecutorService scheduler
-        +requestPhase(Direction) void
-        +start()
-        -cycle()
-    }
-    class TrafficSignal {
-        -Direction direction
-        -SignalState state
-        +changeState()
-        +forceRed()
-        +snapshot() SignalSnapshot
-    }
-    class SignalState {
-        <<interface>>
-        +next(TrafficSignal) SignalState
-        +duration() Duration
-        +name() String
-    }
-    class TimingPolicy {
-        <<interface>>
-        +greenTime(Direction) Duration
-        +yellowTime() Duration
-        +allRedTime() Duration
-    }
-    TrafficController --> TrafficSignal
-    TrafficController --> TimingPolicy
-    TrafficSignal --> SignalState
-    SignalState <|.. RedState
-    SignalState <|.. GreenState
-    SignalState <|.. YellowState
-    TimingPolicy <|.. FixedTimingPolicy
-    TimingPolicy <|.. AdaptiveTimingPolicy
+ class TrafficController {
+ <<singleton>>
+ -Map~Direction,TrafficSignal~ signals
+ -List~Direction~ rotation
+ -TimingPolicy timing
+ -ScheduledExecutorService scheduler
+ +requestPhase(Direction) void
+ +start()
+ -cycle()
+ }
+ class TrafficSignal {
+ -Direction direction
+ -SignalState state
+ +changeState()
+ +forceRed()
+ +snapshot() SignalSnapshot
+ }
+ class SignalState {
+ <<interface>>
+ +next(TrafficSignal) SignalState
+ +duration() Duration
+ +name() String
+ }
+ class TimingPolicy {
+ <<interface>>
+ +greenTime(Direction) Duration
+ +yellowTime() Duration
+ +allRedTime() Duration
+ }
+ TrafficController --> TrafficSignal
+ TrafficController --> TimingPolicy
+ TrafficSignal --> SignalState
+ SignalState <|.. RedState
+ SignalState <|.. GreenState
+ SignalState <|.. YellowState
+ TimingPolicy <|.. FixedTimingPolicy
+ TimingPolicy <|.. AdaptiveTimingPolicy
 ```
 
 ### Key design decisions
@@ -1009,95 +1009,95 @@ class TrafficController {
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Idle
-    Idle --> HasMoney : insertMoney()
-    Idle --> Idle : selectItem / refund (no-ops)
+ [*] --> Idle
+ Idle --> HasMoney : insertMoney()
+ Idle --> Idle : selectItem / refund (no-ops)
 
-    HasMoney --> HasMoney : insertMoney (accumulate)
-    HasMoney --> Dispensing : selectItem [price <= balance && in stock]
-    HasMoney --> SoldOut : selectItem [out of stock]
-    HasMoney --> Idle : cancel / refund
+ HasMoney --> HasMoney : insertMoney (accumulate)
+ HasMoney --> Dispensing : selectItem [price <= balance && in stock]
+ HasMoney --> SoldOut : selectItem [out of stock]
+ HasMoney --> Idle : cancel / refund
 
-    Dispensing --> Idle : dispense() + change [stock remains]
-    Dispensing --> SoldOut : dispense() + change [stock empty]
-    note right of Dispensing
-        effects: inventory.take(code)
-        collect money, compute & return change
-    end note
+ Dispensing --> Idle : dispense() + change [stock remains]
+ Dispensing --> SoldOut : dispense() + change [stock empty]
+ note right of Dispensing
+ effects: inventory.take(code)
+ collect money, compute & return change
+ end note
 
-    SoldOut --> Idle : restock()
-    SoldOut --> SoldOut : selectItem (no-op)
+ SoldOut --> Idle : restock()
+ SoldOut --> SoldOut : selectItem (no-op)
 
-    state Idle {
-        [*] --> WaitingForMoney
-    }
+ state Idle (
+ [*] --> WaitingForMoney
+ }
 ```
 
 ### Sequence - successful purchase with change
 
 ```mermaid
 sequenceDiagram
-    actor U as User
-    participant VM as VendingMachine
-    participant S as HasMoneyState
-    participant D as DispenseState
-    participant INV as Inventory
-    participant CH as ChangeCalculator
+ actor U as User
+ participant VM as VendingMachine
+ participant S as HasMoneyState
+ participant D as DispenseState
+ participant INV as Inventory
+ participant CH as ChangeCalculator
 
-    U->>VM: insertMoney(QUARTER x3 = 75c)
-    VM->>S: accumulate balance=75
-    U->>VM: selectItem("A1", price=60c)
-    VM->>S: validate
-    S->>INV: count("A1") > 0 ? yes
-    S->>VM: transition DispenseState
-    VM->>D: dispense()
-    D->>INV: take("A1")
-    D->>CH: makeChange(15c)
-    CH-->>D: {DIME:1, NICKEL:1}
-    D-->>U: item + 15c change
-    VM->>VM: transition Idle (or SoldOut if empty)
+ U->>VM: insertMoney(QUARTER x3 = 75c)
+ VM->>S: accumulate balance=75
+ U->>VM: selectItem("A1", price=60c)
+ VM->>S: validate
+ S->>INV: count("A1") > 0 ? yes
+ S->>VM: transition DispenseState
+ VM->>D: dispense()
+ D->>INV: take("A1")
+ D->>CH: makeChange(15c)
+ CH-->>D: (DIME:1, NICKEL:1)
+ D-->>U: item + 15c change
+ VM->>VM: transition Idle (or SoldOut if empty)
 ```
 
 ### Class diagram
 
 ```mermaid
 classDiagram
-    class VendingMachine {
-        -VendingMachineState state
-        -int balanceCents
-        -Inventory inventory
-        -ChangeCalculator changeCalculator
-        +insertMoney(Coin)
-        +selectItem(String code)
-        +cancel()
-        +restock(String code, int qty)
-        +setState(VendingMachineState)
-    }
-    class VendingMachineState {
-        <<interface>>
-        +insertMoney(Coin)*
-        +selectItem(String)*
-        +dispense()*
-        +refund()*
-    }
-    class Inventory {
-        -Map~String,Item~ items
-        -Map~String,Integer~ counts
-        +peek(code) Item
-        +take(code) Item
-        +count(code) int
-    }
-    class ChangeCalculator {
-        <<interface>>
-        +makeChange(int cents) Map~Coin,Integer~
-    }
-    VendingMachine --> VendingMachineState
-    VendingMachine --> Inventory
-    VendingMachine --> ChangeCalculator
-    VendingMachineState <|.. IdleState
-    VendingMachineState <|.. HasMoneyState
-    VendingMachineState <|.. DispenseState
-    VendingMachineState <|.. SoldOutState
+ class VendingMachine {
+ -VendingMachineState state
+ -int balanceCents
+ -Inventory inventory
+ -ChangeCalculator changeCalculator
+ +insertMoney(Coin)
+ +selectItem(String code)
+ +cancel()
+ +restock(String code, int qty)
+ +setState(VendingMachineState)
+ }
+ class VendingMachineState {
+ <<interface>>
+ +insertMoney(Coin)*
+ +selectItem(String)*
+ +dispense()*
+ +refund()*
+ }
+ class Inventory {
+ -Map~String,Item~ items
+ -Map~String,Integer~ counts
+ +peek(code) Item
+ +take(code) Item
+ +count(code) int
+ }
+ class ChangeCalculator {
+ <<interface>>
+ +makeChange(int cents) Map~Coin,Integer~
+ }
+ VendingMachine --> VendingMachineState
+ VendingMachine --> Inventory
+ VendingMachine --> ChangeCalculator
+ VendingMachineState <|.. IdleState
+ VendingMachineState <|.. HasMoneyState
+ VendingMachineState <|.. DispenseState
+ VendingMachineState <|.. SoldOutState
 ```
 
 ### Key design decisions
@@ -1298,91 +1298,91 @@ final class SoldOutState implements VendingMachineState {
 
 ```mermaid
 classDiagram
-    class Task {
-        <<aggregate root>>
-        -String id
-        -String title
-        -TaskStatus status
-        -Priority priority
-        -User assignee
-        -Instant dueDate
-        -List~Task~ subtasks
-        -long version
-        +start()
-        +block(String reason)
-        +complete()
-        +addSubtask(Task)
-    }
-    class User {
-        -String id
-        -String name
-        -String email
-    }
-    class TaskRepository {
-        <<interface>>
-        +save(Task)
-        +findById(String) Optional~Task~
-        +findAll() List~Task~
-        +delete(String)
-    }
-    class TaskService {
-        -TaskRepository repo
-        -List~TaskEventListener~ listeners
-        +create(title, creator) Task
-        +assign(taskId, assignee)
-        +search(Specification~Task~) List~Task~
-    }
-    class Specification~T~ {
-        <<interface>>
-        +isSatisfiedBy(T) boolean
-        +and(Specification) Specification
-        +or(Specification) Specification
-        +not(Specification) Specification
-    }
-    TaskService --> TaskRepository
-    TaskService --> Specification~Task~
-    Task --> Task : subtasks
-    Task --> User : assignee
+ class Task {
+ <<aggregate root>>
+ -String id
+ -String title
+ -TaskStatus status
+ -Priority priority
+ -User assignee
+ -Instant dueDate
+ -List~Task~ subtasks
+ -long version
+ +start()
+ +block(String reason)
+ +complete()
+ +addSubtask(Task)
+ }
+ class User {
+ -String id
+ -String name
+ -String email
+ }
+ class TaskRepository {
+ <<interface>>
+ +save(Task)
+ +findById(String) Optional~Task~
+ +findAll() List~Task~
+ +delete(String)
+ }
+ class TaskService {
+ -TaskRepository repo
+ -List~TaskEventListener~ listeners
+ +create(title, creator) Task
+ +assign(taskId, assignee)
+ +search(Specification~Task~) List~Task~
+ }
+ class Specification~T~ {
+ <<interface>>
+ +isSatisfiedBy(T) boolean
+ +and(Specification) Specification
+ +or(Specification) Specification
+ +not(Specification) Specification
+ }
+ TaskService --> TaskRepository
+ TaskService --> Specification~Task~
+ Task --> Task : subtasks
+ Task --> User : assignee
 ```
 
 ### Task lifecycle
 
 ```mermaid
 stateDiagram-v2
-    [*] --> TODO
-    TODO --> IN_PROGRESS : start()
-    TODO --> CANCELLED : cancel()
-    IN_PROGRESS --> BLOCKED : block(reason)
-    BLOCKED --> IN_PROGRESS : unblock()
-    IN_PROGRESS --> DONE : complete() [subtasks all DONE]
-    IN_PROGRESS --> CANCELLED : cancel()
-    DONE --> [*]
-    CANCELLED --> [*]
-    note right of DONE
-        guard: all subtasks DONE
-        side-effect: notify listeners
-    end note
+ [*] --> TODO
+ TODO --> IN_PROGRESS : start()
+ TODO --> CANCELLED : cancel()
+ IN_PROGRESS --> BLOCKED : block(reason)
+ BLOCKED --> IN_PROGRESS : unblock()
+ IN_PROGRESS --> DONE : complete() [subtasks all DONE]
+ IN_PROGRESS --> CANCELLED : cancel()
+ DONE --> [*]
+ CANCELLED --> [*]
+ note right of DONE
+ guard: all subtasks DONE
+ side-effect: notify listeners
+ end note
 ```
 
 ### Sequence - assignment with notification
 
 ```mermaid
 sequenceDiagram
-    actor M as Manager
-    participant S as TaskService
-    participant R as TaskRepository
-    participant EM as EmailListener
-    participant SL as SlackListener
+ actor M as Manager
+ participant S as TaskService
+ participant R as TaskRepository
+ participant EM as EmailListener
+ participant SL as SlackListener
 
-    M->>S: assign("T-42", alice)
-    S->>R: findById("T-42")
-    R-->>S: Task(TODO)
-    S->>S: task.setAssignee(alice)
-    S->>R: save(task)
-    par fan-out to listeners
-        S->>EM: onAssigned(task, alice)
-        S->>SL: onAssigned(task, alice)
-    end
+ M->>S: assign("T-42", alice)
+ S->>R: findById("T-42")
+ R-->>S: Task(TODO)
+ S->>S: task.setAssignee(alice)
+ S->>R: save(task)
+ par fan-out to listeners
+ S->>EM: onAssigned(task, alice)
+ S->>SL: onAssigned(task, alice)
+ end
 ```
 
 ### Key design decisions
@@ -1570,54 +1570,56 @@ class TaskService {
 
 ```mermaid
 flowchart LR
-    subgraph Producers
-        P1[Producer A] & P2[Producer B]
-    end
-    subgraph Cluster
-        B1[Broker 1<br/>TopicX-P0, TopicX-P1] 
-        B2[Broker 2<br/>TopicX-P2, TopicY-P0]
-    end
-    subgraph Consumers
-        subgraph Group1
-            C1[Consumer 1 → P0] & C2[Consumer 2 → P1,P2]
-        end
-        subgraph Group2
-            C3[Consumer 3 → P0,P1,P2]
-        end
-    end
-    P1 -->|append| B1
-    P1 -->|append| B2
-    P2 -->|append| B1
-    P2 -->|append| B2
-    B1 -->|pull| C1
-    B1 -->|pull| C2
-    B2 -->|pull| C1
-    B2 -->|pull| C2
-    B1 -->|pull| C3
-    B2 -->|pull| C3
-    CO[Coordinator<br/>offsets + rebalancing] --- B1
+ subgraph Producers
+ P1["Producer A"]
+ P2["Producer B"]
+ end
+ subgraph Cluster
+ B1["Broker 1 TopicX-P0, TopicX-P1"] 
+ B2["Broker 2 TopicX-P2, TopicY-P0"]
+ end
+ subgraph Consumers
+ subgraph Group1
+ C1["Consumer 1 → P0"]
+ C2["Consumer 2 → P1,P2"]
+ end
+ subgraph Group2
+ C3["Consumer 3 → P0,P1,P2"]
+ end
+ end
+ P1 -->|append| B1
+ P1 -->|append| B2
+ P2 -->|append| B1
+ P2 -->|append| B2
+ B1 -->|pull| C1
+ B1 -->|pull| C2
+ B2 -->|pull| C1
+ B2 -->|pull| C2
+ B1 -->|pull| C3
+ B2 -->|pull| C3
+ CO["Coordinator offsets + rebalancing"] --- B1
 ```
 
 ### Sequence - produce → replicate acks → consume → commit
 
 ```mermaid
 sequenceDiagram
-    participant P as Producer
-    participant L as Partition Leader
-    participant F as Follower
-    participant C as Consumer
-    participant O as OffsetStore
+ participant P as Producer
+ participant L as Partition Leader
+ participant F as Follower
+ participant C as Consumer
+ participant O as OffsetStore
 
-    P->>L: append(msg, acks=all)
-    L->>L: write to pagecache
-    L->>F: replicate
-    F-->>L: ack
-    L-->>P: ack (offset, timestamp)
-    Note over P: send-buffer retries on timeout<br/>= at-least-once possible
-    C->>L: fetch(offset=42, maxBytes)
-    L-->>C: records[42..57]
-    C->>C: process (idempotent handler!)
-    C->>O: commitOffset(58)
+ P->>L: append(msg, acks=all)
+ L->>L: write to pagecache
+ L->>F: replicate
+ F-->>L: ack
+ L-->>P: ack (offset, timestamp)
+ Note over P: send-buffer retries on timeout = at-least-once possible
+ C->>L: fetch(offset=42, maxBytes)
+ L-->>C: records["42..57"]
+ C->>C: process (idempotent handler!)
+ C->>O: commitOffset(58)
 ```
 
 ### Delivery semantics table (memorize)
@@ -1632,37 +1634,37 @@ sequenceDiagram
 
 ```mermaid
 classDiagram
-    class Publisher {
-        +createTopic(name, partitions) Topic
-        +publish(topic, key, payload) long
-    }
-    class Topic {
-        -String name
-        -List~Partition~ partitions
-        +route(Message) Partition
-    }
-    class Partition {
-        -List~Message~ log
-        -AtomicLong nextOffset
-        +append(Message) long
-        +readFrom(offset, max) List~Message~
-        +highWatermark() long
-    }
-    class Consumer {
-        -Map~Integer,Long~ offsets
-        +run()
-        +seek(long)
-        +commit()
-    }
-    class ConsumerGroup {
-        -String id
-        -assign(Topic) Map~Partition,Consumer~
-        -rebalance()
-    }
-    Publisher --> Topic
-    Topic --> Partition
-    ConsumerGroup --> Consumer
-    Consumer --> Partition : pulls
+ class Publisher {
+ +createTopic(name, partitions) Topic
+ +publish(topic, key, payload) long
+ }
+ class Topic {
+ -String name
+ -List~Partition~ partitions
+ +route(Message) Partition
+ }
+ class Partition {
+ -List~Message~ log
+ -AtomicLong nextOffset
+ +append(Message) long
+ +readFrom(offset, max) List~Message~
+ +highWatermark() long
+ }
+ class Consumer {
+ -Map~Integer,Long~ offsets
+ +run()
+ +seek(long)
+ +commit()
+ }
+ class ConsumerGroup {
+ -String id
+ -assign(Topic) Map~Partition,Consumer~
+ -rebalance()
+ }
+ Publisher --> Topic
+ Topic --> Partition
+ ConsumerGroup --> Consumer
+ Consumer --> Partition : pulls
 ```
 
 ### Key design decisions
@@ -1824,110 +1826,110 @@ class ConsumerGroup {
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Idle
-    Idle --> CardInserted : insertCard [card valid format]
-    CardInserted --> Authenticated : enterPin [3 attempts max]
-    CardInserted --> Idle : eject / 3 wrong PINs (retain card)
-    Authenticated --> Transaction : selectOp(Withdraw/Deposit/Transfer)
-    Transaction --> Authenticated : execute ok / decline
-    Transaction --> Authenticated : cancel
-    Authenticated --> Idle : eject
-    state Transaction {
-        [*] --> Validating
-        Validating --> Debiting : limits OK
-        Validating --> Declined : insufficient funds/limit
-        Debiting --> Dispensing : bank confirms
-        Dispensing --> Done
-        Declined --> [*]
-        Done --> [*]
-    }
-    note right of Transaction
-        Order matters: debit FIRST,
-        dispense SECOND (never reverse)
-    end note
+ [*] --> Idle
+ Idle --> CardInserted : insertCard [card valid format]
+ CardInserted --> Authenticated : enterPin [3 attempts max]
+ CardInserted --> Idle : eject / 3 wrong PINs (retain card)
+ Authenticated --> Transaction : selectOp(Withdraw/Deposit/Transfer)
+ Transaction --> Authenticated : execute ok / decline
+ Transaction --> Authenticated : cancel
+ Authenticated --> Idle : eject
+ state Transaction (
+ [*] --> Validating
+ Validating --> Debiting : limits OK
+ Validating --> Declined : insufficient funds/limit
+ Debiting --> Dispensing : bank confirms
+ Dispensing --> Done
+ Declined --> [*]
+ Done --> [*]
+ }
+ note right of Transaction
+ Order matters: debit FIRST,
+ dispense SECOND (never reverse)
+ end note
 ```
 
 ### Dispenser chain
 
 ```mermaid
 flowchart LR
-    A[Amount ₹470] --> H100["₹100 handler<br/>use 4, left ₹70"]
-    H100 --> H50["₹50 handler<br/>use 1, left ₹20"]
-    H50 --> H20["₹20 handler<br/>use 1, left ₹0"]
-    H20 --> DONE[Dispense map<br/>{100:4, 50:1, 20:1}]
-    style DONE fill:#cde
+ A["Amount Rs.470"] --> H100["Rs.100 handler use 4, left Rs.70"]
+ H100 --> H50["Rs.50 handler use 1, left Rs.20"]
+ H50 --> H20["Rs.20 handler use 1, left Rs.0"]
+ H20 --> DONE["Dispense map (100:4, 50:1, 20:1)"]
+ style DONE fill:#cde
 ```
 
 ### Class diagram
 
 ```mermaid
 classDiagram
-    class ATM {
-        -ATMState state
-        -BankService bank
-        -CashDispenser dispenser
-        +insertCard(Card)
-        +enterPin(pin)
-        +execute(Transaction)
-        +eject()
-    }
-    class BankService {
-        <<interface>>
-        +authenticate(cardNo, pin) boolean
-        +debit(cardNo, Money, idempotencyKey)
-        +credit(cardNo, Money)
-        +balance(cardNo) Money
-    }
-    class Transaction {
-        <<abstract>>
-        #String cardNumber
-        #Money amount
-        +execute(BankService, CashDispenser)*
-    }
-    class CashDispenser {
-        -CashHandler chain
-        +dispense(int cents) Map~Denomination,Integer~
-    }
-    class CashHandler {
-        <<abstract>>
-        #CashHandler next
-        +setNext(CashHandler)
-        +dispense(int, Map)*
-    }
-    ATM --> BankService
-    ATM --> CashDispenser
-    ATM --> ATMState
-    ATMState <|.. IdleState
-    ATMState <|.. CardInsertedState
-    ATMState <|.. AuthenticatedState
-    Transaction <|.. Withdrawal
-    Transaction <|.. Deposit
-    Transaction <|.. Transfer
-    CashDispenser --> CashHandler
-    CashHandler <|.. DenominationHandler
+ class ATM {
+ -ATMState state
+ -BankService bank
+ -CashDispenser dispenser
+ +insertCard(Card)
+ +enterPin(pin)
+ +execute(Transaction)
+ +eject()
+ }
+ class BankService {
+ <<interface>>
+ +authenticate(cardNo, pin) boolean
+ +debit(cardNo, Money, idempotencyKey)
+ +credit(cardNo, Money)
+ +balance(cardNo) Money
+ }
+ class Transaction {
+ <<abstract>>
+ #String cardNumber
+ #Money amount
+ +execute(BankService, CashDispenser)*
+ }
+ class CashDispenser {
+ -CashHandler chain
+ +dispense(int cents) Map~Denomination,Integer~
+ }
+ class CashHandler {
+ <<abstract>>
+ #CashHandler next
+ +setNext(CashHandler)
+ +dispense(int, Map)*
+ }
+ ATM --> BankService
+ ATM --> CashDispenser
+ ATM --> ATMState
+ ATMState <|.. IdleState
+ ATMState <|.. CardInsertedState
+ ATMState <|.. AuthenticatedState
+ Transaction <|.. Withdrawal
+ Transaction <|.. Deposit
+ Transaction <|.. Transfer
+ CashDispenser --> CashHandler
+ CashHandler <|.. DenominationHandler
 ```
 
 ### Sequence - withdrawal (the order-of-operations diagram)
 
 ```mermaid
 sequenceDiagram
-    actor U as User
-    participant A as ATM
-    participant B as BankService
-    participant D as CashDispenser
+ actor U as User
+ participant A as ATM
+ participant B as BankService
+ participant D as CashDispenser
 
-    U->>A: withdraw ₹470
-    A->>B: debit(card, ₹470, key=uuid-7)
-    alt sufficient funds & under daily limit
-        B-->>A: OK
-        A->>D: dispense(470)
-        D-->>A: {100x4, 50x1, 20x1}
-        A-->>U: cash + receipt
-    else insufficient
-        B-->>A: INSUFFICIENT
-        A-->>U: declined (no cash moved)
-    end
-    Note over A,D: If ATM jams AFTER debit:<br/>bank records pending dispense →<br/>auto-reversal job reconciles
+ U->>A: withdraw Rs.470
+ A->>B: debit(card, Rs.470, key=uuid-7)
+ alt sufficient funds & under daily limit
+ B-->>A: OK
+ A->>D: dispense(470)
+ D-->>A: (100x4, 50x1, 20x1)
+ A-->>U: cash + receipt
+ else insufficient
+ B-->>A: INSUFFICIENT
+ A-->>U: declined (no cash moved)
+ end
+ Note over A,D: If ATM jams AFTER debit: bank records pending dispense → auto-reversal job reconciles
 ```
 
 ### Key design decisions
@@ -2144,92 +2146,92 @@ final class AuthenticatedState implements ATMState {
 
 ```mermaid
 classDiagram
-    class Hotel {
-        -String id
-        -String city
-        -List~Room~ rooms
-        -PricingStrategy pricing
-        +availability(RoomType, DateRange) boolean
-        +book(Guest, RoomType, DateRange) Booking
-    }
-    class Room {
-        -int number
-        -RoomType type
-        -RoomStatus status
-        +assign()
-        +releaseToCleaning()
-        +markReady()
-    }
-    class Booking {
-        <<aggregate>>
-        -String id
-        -Guest guest
-        -RoomType roomType
-        -Room assignedRoom
-        -DateRange dates
-        -BookingStatus status
-        -Money total
-        +confirm()
-        +checkIn(Room)
-        +checkOut(List~Charge~) Invoice
-        +cancel(now) Money
-    }
-    class PricingStrategy {
-        <<interface>>
-        +price(RoomType, DateRange) Money
-    }
-    class HousekeepingService {
-        +scheduleCleaning(Room)
-        +markOutOfOrder(Room, reason)
-    }
-    Hotel --> Room
-    Hotel --> PricingStrategy
-    Hotel --> Booking
-    Booking --> Room
-    Booking --> Guest
-    Booking --> Invoice
+ class Hotel {
+ -String id
+ -String city
+ -List~Room~ rooms
+ -PricingStrategy pricing
+ +availability(RoomType, DateRange) boolean
+ +book(Guest, RoomType, DateRange) Booking
+ }
+ class Room {
+ -int number
+ -RoomType type
+ -RoomStatus status
+ +assign()
+ +releaseToCleaning()
+ +markReady()
+ }
+ class Booking {
+ <<aggregate>>
+ -String id
+ -Guest guest
+ -RoomType roomType
+ -Room assignedRoom
+ -DateRange dates
+ -BookingStatus status
+ -Money total
+ +confirm()
+ +checkIn(Room)
+ +checkOut(List~Charge~) Invoice
+ +cancel(now) Money
+ }
+ class PricingStrategy {
+ <<interface>>
+ +price(RoomType, DateRange) Money
+ }
+ class HousekeepingService {
+ +scheduleCleaning(Room)
+ +markOutOfOrder(Room, reason)
+ }
+ Hotel --> Room
+ Hotel --> PricingStrategy
+ Hotel --> Booking
+ Booking --> Room
+ Booking --> Guest
+ Booking --> Invoice
 ```
 
 ### Booking lifecycle state diagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> PENDING : book() [inventory decremented]
-    PENDING --> CONFIRMED : payment captured
-    PENDING --> CANCELLED : payment failed / guest cancels
-    CONFIRMED --> CHECKED_IN : checkIn(room) [room AVAILABLE]
-    CONFIRMED --> CANCELLED : cancel() [free-cancellation window]
-    CONFIRMED --> NO_SHOW : no-show job [charge first night]
-    CHECKED_IN --> COMPLETED : checkOut() [room → CLEANING]
-    COMPLETED --> [*]
-    note right of CHECKED_IN
-        concrete room assigned HERE,
-        not at booking time
-    end note
+ [*] --> PENDING : book() [inventory decremented]
+ PENDING --> CONFIRMED : payment captured
+ PENDING --> CANCELLED : payment failed / guest cancels
+ CONFIRMED --> CHECKED_IN : checkIn(room) [room AVAILABLE]
+ CONFIRMED --> CANCELLED : cancel() [free-cancellation window]
+ CONFIRMED --> NO_SHOW : no-show job [charge first night]
+ CHECKED_IN --> COMPLETED : checkOut() [room → CLEANING]
+ COMPLETED --> [*]
+ note right of CHECKED_IN
+ concrete room assigned HERE,
+ not at booking time
+ end note
 ```
 
 ### Sequence - booking the last available room (concurrency story)
 
 ```mermaid
 sequenceDiagram
-    actor G1 as Guest-1 (tab A)
-    actor G2 as Guest-2 (tab B)
-    participant H as Hotel
-    participant INV as Inventory
-    participant PAY as Payment
+ actor G1 as Guest-1 (tab A)
+ actor G2 as Guest-2 (tab B)
+ participant H as Hotel
+ participant INV as Inventory
+ participant PAY as Payment
 
-    par race for last DELUXE
-        G1->>H: book(DELUXE, 12-14)
-        G2->>H: book(DELUXE, 12-14)
-    end
-    H->>INV: reserve(DELUXE) - atomic decrement
-    alt only 1 slot
-        INV-->>H(G1): slot granted
-        INV-->>H(G2): InventoryExhausted
-    end
-    H->>PAY: capture(G1)
-    PAY-->>H: ok → CONFIRMED
-    H-->>G2: sorry, sold out
+ par race for last DELUXE
+ G1->>H: book(DELUXE, 12-14)
+ G2->>H: book(DELUXE, 12-14)
+ end
+ H->>INV: reserve(DELUXE) - atomic decrement
+ alt only 1 slot
+ INV-->>H(G1): slot granted
+ INV-->>H(G2): InventoryExhausted
+ end
+ H->>PAY: capture(G1)
+ PAY-->>H: ok → CONFIRMED
+ H-->>G2: sorry, sold out
 ```
 
 ### Key design decisions
@@ -2475,62 +2477,62 @@ LOOK variant: don't go to the extreme floor unless a stop exists there. Real ele
 
 ```mermaid
 classDiagram
-    class ElevatorController {
-        <<singleton>>
-        -List~Elevator~ fleet
-        -DispatchStrategy dispatch
-        +requestHall(int floor, Direction)
-        +requestCar(Elevator, int dest)
-    }
-    class Elevator {
-        -int id
-        -int currentFloor
-        -Direction direction
-        -NavigableSet~Integer~ upStops
-        -NavigableSet~Integer~ downStops
-        -Queue~Request~ hallCalls
-        +addStop(int)
-        +canServe(Request) boolean
-        +run()
-        -nextStop() Integer
-    }
-    class DispatchStrategy {
-        <<interface>>
-        +pick(List~Elevator~, Request) Elevator
-    }
-    class ElevatorState {
-        <<interface>>
-        +onEnter()
-    }
-    ElevatorController --> Elevator
-    ElevatorController --> DispatchStrategy
-    Elevator --> ElevatorState
-    ElevatorState <|.. IdleState
-    ElevatorState <|.. MovingState
-    ElevatorState <|.. DoorOpenState
-    ElevatorState <|.. MaintenanceState
-    DispatchStrategy <|.. NearestCarStrategy
-    DispatchStrategy <|.. ZonedStrategy
+ class ElevatorController {
+ <<singleton>>
+ -List~Elevator~ fleet
+ -DispatchStrategy dispatch
+ +requestHall(int floor, Direction)
+ +requestCar(Elevator, int dest)
+ }
+ class Elevator {
+ -int id
+ -int currentFloor
+ -Direction direction
+ -NavigableSet~Integer~ upStops
+ -NavigableSet~Integer~ downStops
+ -Queue~Request~ hallCalls
+ +addStop(int)
+ +canServe(Request) boolean
+ +run()
+ -nextStop() Integer
+ }
+ class DispatchStrategy {
+ <<interface>>
+ +pick(List~Elevator~, Request) Elevator
+ }
+ class ElevatorState {
+ <<interface>>
+ +onEnter()
+ }
+ ElevatorController --> Elevator
+ ElevatorController --> DispatchStrategy
+ Elevator --> ElevatorState
+ ElevatorState <|.. IdleState
+ ElevatorState <|.. MovingState
+ ElevatorState <|.. DoorOpenState
+ ElevatorState <|.. MaintenanceState
+ DispatchStrategy <|.. NearestCarStrategy
+ DispatchStrategy <|.. ZonedStrategy
 ```
 
 ### Sequence - hall call dispatch
 
 ```mermaid
 sequenceDiagram
-    actor U as User at floor 7
-    participant C as Controller
-    participant S as NearestCarStrategy
-    participant E1 as Elevator-1 (floor 3, UP)
-    participant E2 as Elevator-2 (floor 9, DOWN)
+ actor U as User at floor 7
+ participant C as Controller
+ participant S as NearestCarStrategy
+ participant E1 as Elevator-1 (floor 3, UP)
+ participant E2 as Elevator-2 (floor 9, DOWN)
 
-    U->>C: requestHall(7, UP)
-    C->>S: pick(fleet, req)
-    S->>E1: canServe? floor≥3, dir UP ✓
-    S->>E2: canServe? going DOWN ✗
-    S-->>C: Elevator-1 (distance 4)
-    C->>E1: addStop(7)
-    E1->>E1: upStops.add(7)
-    Note over E1: main loop picks it up<br/>during UP sweep
+ U->>C: requestHall(7, UP)
+ C->>S: pick(fleet, req)
+ S->>E1: canServe? floor≥3, dir UP ✓
+ S->>E2: canServe? going DOWN ✗
+ S-->>C: Elevator-1 (distance 4)
+ C->>E1: addStop(7)
+ E1->>E1: upStops.add(7)
+ Note over E1: main loop picks it up during UP sweep
 ```
 
 ### Key design decisions
@@ -2708,47 +2710,47 @@ class ElevatorController {
 
 ```mermaid
 flowchart LR
-    subgraph App
-        WS[WalletService]
-        LED[Ledger<br/>double-entry]
-        IDEM[IdempotencyStore]
-        OB[Outbox]
-    end
-    subgraph Infra
-        DB[(Wallet DB)]
-        MQ[Message Broker]
-        BANK[Bank/Card PSP]
-    end
-    WS --> LED
-    WS --> IDEM
-    WS -->|txn| DB
-    WS -->|event rows, same txn| OB
-    OB -.->|CDC / relay| MQ
-    MQ -.->|notifications, analytics| CONS[Consumers]
-    WS --> BANK
+ subgraph App
+ WS["WalletService"]
+ LED["Ledger double-entry"]
+ IDEM["IdempotencyStore"]
+ OB["Outbox"]
+ end
+ subgraph Infra
+ DB["(Wallet DB)"]
+ MQ["Message Broker"]
+ BANK["Bank/Card PSP"]
+ end
+ WS --> LED
+ WS --> IDEM
+ WS -->|txn| DB
+ WS -->|event rows, same txn| OB
+ OB -.->|CDC / relay| MQ
+ MQ -.->|notifications, analytics| CONS["Consumers"]
+ WS --> BANK
 ```
 
 ### Sequence - transfer with failure compensation
 
 ```mermaid
 sequenceDiagram
-    participant A as Alice Wallet
-    participant S as WalletService
-    participant B as Bob Wallet
-    participant L as Ledger
+ participant A as Alice Wallet
+ participant S as WalletService
+ participant B as Bob Wallet
+ participant L as Ledger
 
-    S->>S: idempotency check (key → result)
-    S->>A: lock (ordered)
-    S->>B: lock (ordered)
-    S->>A: debit(₹500) [sufficient?]
-    alt insufficient
-        S-->>S: FAILED (no state changed)
-    else ok
-        S->>B: credit(₹500)
-        S->>L: post(txId, -500/+500)
-        S-->>S: COMPLETED
-    end
-    Note over S,L: crash between debit & credit?<br/>reconciliation job: PENDING > 60s<br/>→ auto-reverse credit to Alice
+ S->>S: idempotency check (key → result)
+ S->>A: lock (ordered)
+ S->>B: lock (ordered)
+ S->>A: debit(Rs.500) [sufficient?]
+ alt insufficient
+ S-->>S: FAILED (no state changed)
+ else ok
+ S->>B: credit(Rs.500)
+ S->>L: post(txId, -500/+500)
+ S-->>S: COMPLETED
+ end
+ Note over S,L: crash between debit & credit? reconciliation job: PENDING > 60s → auto-reverse credit to Alice
 ```
 
 ### Double-entry invariants (state these)
@@ -2761,36 +2763,36 @@ sequenceDiagram
 
 ```mermaid
 classDiagram
-    class Wallet {
-        -String walletId
-        -BigDecimal balance
-        -long version
-        -String currency
-        +debit(Money)
-        +credit(Money)
-    }
-    class Ledger {
-        +post(String txId, LedgerLine... lines)
-        +balanceOf(String walletId) Money
-    }
-    class LedgerLine {
-        <<record>>
-        +String walletId
-        +BigDecimal signedAmount
-    }
-    class TransferService {
-        -IdempotencyStore idem
-        -Ledger ledger
-        +transfer(key, from, to, Money) TxResult
-    }
-    class IdempotencyStore {
-        -Map~String,TxResult~ seen
-        +computeIfAbsent(key, fn)
-    }
-    TransferService --> Wallet
-    TransferService --> Ledger
-    TransferService --> IdempotencyStore
-    Ledger --> LedgerLine
+ class Wallet {
+ -String walletId
+ -BigDecimal balance
+ -long version
+ -String currency
+ +debit(Money)
+ +credit(Money)
+ }
+ class Ledger {
+ +post(String txId, LedgerLine... lines)
+ +balanceOf(String walletId) Money
+ }
+ class LedgerLine {
+ <<record>>
+ +String walletId
+ +BigDecimal signedAmount
+ }
+ class TransferService {
+ -IdempotencyStore idem
+ -Ledger ledger
+ +transfer(key, from, to, Money) TxResult
+ }
+ class IdempotencyStore {
+ -Map~String,TxResult~ seen
+ +computeIfAbsent(key, fn)
+ }
+ TransferService --> Wallet
+ TransferService --> Ledger
+ TransferService --> IdempotencyStore
+ Ledger --> LedgerLine
 ```
 
 ### Key design decisions
@@ -2809,14 +2811,14 @@ classDiagram
 
 ```mermaid
 flowchart TD
-    Q1{Same JVM?} -->|yes| Q2{High contention<br/>on write?}
-    Q1 -->|no| Q3{Distributed lock<br/>needed?}
-    Q2 -->|yes| PESS[Pessimistic:<br/>ReentrantLock /<br/>SELECT FOR UPDATE]
-    Q2 -->|no| OPT[Optimistic:<br/>version + CAS retry]
-    Q3 -->|yes| Q4{Hold time vs TTL risk?}
-    Q3 -->|no| DBLOCK[DB row lock]
-    Q4 -->|short, safe| REDIS[Redis SET NX PX<br/>+ fencing token]
-    Q4 -->|needs strong<br/>consistency| ZK[ZooKeeper /<br/>etcd lease]
+ Q1(Same JVM?) -->|yes| Q2(High contention on write?)
+ Q1 -->|no| Q3(Distributed lock needed?)
+ Q2 -->|yes| PESS["Pessimistic: ReentrantLock / SELECT FOR UPDATE"]
+ Q2 -->|no| OPT["Optimistic: version + CAS retry"]
+ Q3 -->|yes| Q4(Hold time vs TTL risk?)
+ Q3 -->|no| DBLOCK["DB row lock"]
+ Q4 -->|short, safe| REDIS["Redis SET NX PX + fencing token"]
+ Q4 -->|needs strong consistency| ZK["ZooKeeper / etcd lease"]
 ```
 
 ### Java lock comparison (know the table)
@@ -2992,95 +2994,95 @@ class WalletService {
 
 ```mermaid
 flowchart LR
-    R[Rider App] -->|request ride| RS[RideService]
-    D[Driver App] -->|location heartbeat,<br/>accept/decline| RS
-    RS --> DM[DriverManager<br/>geo-index]
-    RS --> FS[FareStrategy<br/>surge engine]
-    RS --> PAY[Payments]
-    RS -->|events| MQ[Event Bus]
-    MQ --> NF[Notifications]
-    MQ --> AN[Analytics]
-    MQ --> PR[Price history]
+ R["Rider App"] -->|request ride| RS["RideService"]
+ D["Driver App"] -->|location heartbeat, accept/decline| RS
+ RS --> DM["DriverManager geo-index"]
+ RS --> FS["FareStrategy surge engine"]
+ RS --> PAY["Payments"]
+ RS -->|events| MQ["Event Bus"]
+ MQ --> NF["Notifications"]
+ MQ --> AN["Analytics"]
+ MQ --> PR["Price history"]
 ```
 
 ### Matching flow (sequence - the money diagram)
 
 ```mermaid
 sequenceDiagram
-    actor R as Rider
-    participant RS as RideService
-    participant DM as DriverManager
-    participant D as Driver(nearby)
-    participant FS as FareService
+ actor R as Rider
+ participant RS as RideService
+ participant DM as DriverManager
+ participant D as Driver(nearby)
+ participant FS as FareService
 
-    R->>RS: request(pickup, drop)
-    RS->>DM: nearestAvailable(pickup, k=5)
-    DM-->>RS: [D1..D5] (geo-index scan)
-    loop sequential offer, 15s each
-        RS->>D: offer(ride) 
-        D-->>RS: accept?
-    end
-    alt accepted by D2
-        RS->>D2: tryOffer() CAS AVAILABLE→OFFERED ✓
-        RS-->>R: matched, ETA 4 min
-    else all declined/timeout
-        RS->>FS: surge bump (cell demand↑)
-        RS-->>R: retrying / surge fare notice
-    end
+ R->>RS: request(pickup, drop)
+ RS->>DM: nearestAvailable(pickup, k=5)
+ DM-->>RS: [D1..D5] (geo-index scan)
+ loop sequential offer, 15s each
+ RS->>D: offer(ride) 
+ D-->>RS: accept?
+ end
+ alt accepted by D2
+ RS->>D2: tryOffer() CAS AVAILABLE→OFFERED ✓
+ RS-->>R: matched, ETA 4 min
+ else all declined/timeout
+ RS->>FS: surge bump (cell demand↑)
+ RS-->>R: retrying / surge fare notice
+ end
 ```
 
 ### Driver lifecycle
 
 ```mermaid
 stateDiagram-v2
-    [*] --> OFFLINE
-    OFFLINE --> AVAILABLE : goOnline [bg check ok]
-    AVAILABLE --> OFFERED : offer() [CAS claim]
-    OFFERED --> ON_TRIP : accept()
-    OFFERED --> AVAILABLE : decline / timeout
-    ON_TRIP --> AVAILABLE : finishTrip()
-    ON_TRIP --> OFFLINE : goOffline
-    AVAILABLE --> OFFLINE : goOffline
+ [*] --> OFFLINE
+ OFFLINE --> AVAILABLE : goOnline [bg check ok]
+ AVAILABLE --> OFFERED : offer() [CAS claim]
+ OFFERED --> ON_TRIP : accept()
+ OFFERED --> AVAILABLE : decline / timeout
+ ON_TRIP --> AVAILABLE : finishTrip()
+ ON_TRIP --> OFFLINE : goOffline
+ AVAILABLE --> OFFLINE : goOffline
 ```
 
 ### Class diagram
 
 ```mermaid
 classDiagram
-    class RideService {
-        +requestRide(Rider, Location, Location) Ride
-        +endTrip(Ride, double surge) Money
-    }
-    class DriverManager {
-        -Map~String,Set~Driver~~ grid
-        +goAvailable(Driver)
-        +remove(Driver)
-        +findNearest(Location, int) List~Driver~
-    }
-    class Ride {
-        -RideStatus status
-        -Driver driver
-        +assign(Driver)
-        +start()
-        +complete()
-    }
-    class FareStrategy {
-        <<interface>>
-        +compute(Ride, double surge) Money
-    }
-    class SurgeEngine {
-        +multiplier(GridCell) double
-    }
-    class PaymentService {
-        +charge(Rider, Money)
-        +payout(Driver, Money)
-    }
-    RideService --> DriverManager
-    RideService --> FareStrategy
-    RideService --> SurgeEngine
-    RideService --> PaymentService
-    Ride --> RideStatus
-    Ride --> Driver
+ class RideService {
+ +requestRide(Rider, Location, Location) Ride
+ +endTrip(Ride, double surge) Money
+ }
+ class DriverManager {
+ -Map~String,Set~Driver~~ grid
+ +goAvailable(Driver)
+ +remove(Driver)
+ +findNearest(Location, int) List~Driver~
+ }
+ class Ride {
+ -RideStatus status
+ -Driver driver
+ +assign(Driver)
+ +start()
+ +complete()
+ }
+ class FareStrategy {
+ <<interface>>
+ +compute(Ride, double surge) Money
+ }
+ class SurgeEngine {
+ +multiplier(GridCell) double
+ }
+ class PaymentService {
+ +charge(Rider, Money)
+ +payout(Driver, Money)
+ }
+ RideService --> DriverManager
+ RideService --> FareStrategy
+ RideService --> SurgeEngine
+ RideService --> PaymentService
+ Ride --> RideStatus
+ Ride --> Driver
 ```
 
 ### Key design decisions
@@ -3282,60 +3284,60 @@ record RideCompletedEvent(String rideId, Money fare) {}
 
 ```mermaid
 classDiagram
-    class Track {
-        -String id
-        -String title
-        -Duration durationMs
-        -List~BitrateVariant~ variants
-        -Lyrics lyrics
-        +variantFor(int kbps) BitrateVariant
-    }
-    class BitrateVariant {
-        -int kbps
-        -List~AudioSegment~ segments
-        +segmentAt(long tsMs) AudioSegment
-    }
-    class AudioSegment {
-        <<record>>
-        +int index
-        +long startMs
-        +long durationMs
-        +String cdnUrl
-    }
-    class Playlist {
-        -String id
-        -User owner
-        -List~Track~ tracks
-        -Set~User~ collaborators
-    }
-    class Player {
-        -PlayerState state
-        -List~Integer~ playOrder
-        +playNext(bandwidth)
-        +seek(long tsMs, bandwidth)
-    }
-    Track --> BitrateVariant
-    BitrateVariant --> AudioSegment
-    Player --> Track : current
-    Playlist --> Track
+ class Track {
+ -String id
+ -String title
+ -Duration durationMs
+ -List~BitrateVariant~ variants
+ -Lyrics lyrics
+ +variantFor(int kbps) BitrateVariant
+ }
+ class BitrateVariant {
+ -int kbps
+ -List~AudioSegment~ segments
+ +segmentAt(long tsMs) AudioSegment
+ }
+ class AudioSegment {
+ <<record>>
+ +int index
+ +long startMs
+ +long durationMs
+ +String cdnUrl
+ }
+ class Playlist {
+ -String id
+ -User owner
+ -List~Track~ tracks
+ -Set~User~ collaborators
+ }
+ class Player {
+ -PlayerState state
+ -List~Integer~ playOrder
+ +playNext(bandwidth)
+ +seek(long tsMs, bandwidth)
+ }
+ Track --> BitrateVariant
+ BitrateVariant --> AudioSegment
+ Player --> Track : current
+ Playlist --> Track
 ```
 
 ### Streaming flow (sequence)
 
 ```mermaid
 sequenceDiagram
-    participant U as Client Player
-    participant API as Catalog/Streaming API
-    participant CDN as CDN
-    U->>API: getStream(trackId, bandwidth=auto)
-    API-->>U: manifest {variants:[128k,256k,320k], segments:[...]}
-    loop playback
-        U->>CDN: GET segment[i] (adaptive: pick variant by measured throughput)
-        CDN-->>U: 4s audio chunk
-        U->>U: buffer (target 2 segments ahead)
-    end
-    U->>API: POST progress (offsetMs, playId)
-    Note over U,CDN: seek = offsetMs → segment index → byte-range GET
+ participant U as Client Player
+ participant API as Catalog/Streaming API
+ participant CDN as CDN
+ U->>API: getStream(trackId, bandwidth=auto)
+ API-->>U: manifest (variants:[128k,256k,320k], segments:[...])
+ loop playback
+ U->>CDN: GET segment["i"] (adaptive: pick variant by measured throughput)
+ CDN-->>U: 4s audio chunk
+ U->>U: buffer (target 2 segments ahead)
+ end
+ U->>API: POST progress (offsetMs, playId)
+ Note over U,CDN: seek = offsetMs → segment index → byte-range GET
 ```
 
 ### Key design decisions
