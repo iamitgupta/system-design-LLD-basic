@@ -8,16 +8,82 @@
 
 ## Table of Contents
 
-- [Universal Framework](#the-universal-framework)
-- [Part 1](#part-1): Parking Lot (Design+Code), Logging Framework (Design+Code), Traffic Signal (Design+Code), Vending Machine (Design+Code), Task Management (Design+Code)
-- [Part 2](#part-2): PubSub (Design+Code), ATM (Design+Code), Hotel Management (Design+Code)
-- [Part 3](#part-3): Elevator (Design+Code), Digital Wallet (Design+Code) + Locking Mechanisms, Ride Booking (Design+Code), Music Streaming (Design+Code) + Streaming Protocols
-- Every topic opens with **Requirements (Actors / Functional / Non-Functional / Edge Cases)**; delivery script in the Universal Framework
-- [Part 0 - Foundations](#part-0---foundations): OOP pillars, SOLID, design-pattern catalog, UML/diagram drawing guides, multithreading, exception handling, Java essentials
-- [Part 4](#part-4---additional-interview-problems): 20 more problems (LRU Cache, Rate Limiter, Snake & Ladder, Tic-Tac-Toe, Splitwise, BookMyShow, Food Delivery, Library, URL Shortener, Stock Exchange, Zoom, Distributed Cache, Git, Singleton, Thread Pool, Blocking Queue, Producer-Consumer, Web Crawler, Immutable Class, Read-Write Lock)
-- [Appendices](#appendix-e--compile-notes--common-imports): E (compile notes), F (12-point self-review)
+**[THE INTERVIEW FRAMEWORK (9 steps - run every problem through these)](#the-interview-framework-9-steps---run-every-problem-through-these)**
+
+- [How your topic sections map to the 9 steps](#how-your-topic-sections-map-to-the-9-steps)
+
+**[PART 0 - FOUNDATIONS](#part-0---foundations)**
+
+- [F1. OOP - The Four Pillars](#f1-oop---the-four-pillars)
+- [F2. SOLID - Principle by Principle](#f2-solid---principle-by-principle)
+- [F3. Design Patterns - The Working Catalog](#f3-design-patterns---the-working-catalog)
+- [F4. UML and Diagrams - How to Draw Each One](#f4-uml-and-diagrams---how-to-draw-each-one)
+- [F5. Multithreading and Concurrency - The Concepts](#f5-multithreading-and-concurrency---the-concepts)
+- [F6. Exception and Error Handling](#f6-exception-and-error-handling)
+- [F7. Java Essentials for LLD Rounds](#f7-java-essentials-for-lld-rounds)
+
+**[PART 1](#part-1)**
+
+- [1. Parking Lot - Design](#1-parking-lot---design)
+- [2. Parking Lot - Code](#2-parking-lot---code)
+- [3. Logging Framework - Design](#3-logging-framework---design)
+- [4. Logging Framework - Code](#4-logging-framework---code)
+- [5. Traffic Signal System - Design](#5-traffic-signal-system---design)
+- [6. Traffic Signal System - Code](#6-traffic-signal-system---code)
+- [7. Vending Machine - Design](#7-vending-machine---design)
+- [8. Vending Machine - Code](#8-vending-machine---code)
+- [9. Task Management System - Design](#9-task-management-system---design)
+- [10. Task Management System - Code](#10-task-management-system---code)
+
+**[PART 2](#part-2)**
+
+- [11. PubSub System - Design](#11-pubsub-system---design)
+- [12. PubSub System - Code](#12-pubsub-system---code)
+- [13. ATM Machine - Design](#13-atm-machine---design)
+- [14. ATM Machine - Code](#14-atm-machine---code)
+- [15. Hotel Management System - Design](#15-hotel-management-system---design)
+- [16. Hotel Management System - Code](#16-hotel-management-system---code)
+
+**[PART 3](#part-3)**
+
+- [17. Elevator System - Design](#17-elevator-system---design)
+- [18. Elevator System - Code](#18-elevator-system---code)
+- [19. Digital Wallet - Design](#19-digital-wallet---design)
+- [20. Types of Locking Mechanisms (Deep Dive)](#20-types-of-locking-mechanisms-deep-dive)
+- [21. Digital Wallet - Code](#21-digital-wallet---code)
+- [22. Ride Booking App - Design](#22-ride-booking-app---design)
+- [23. Ride Booking App - Code](#23-ride-booking-app---code)
+- [24. Music Streaming Platform - Design](#24-music-streaming-platform---design)
+- [25. Streaming Protocols (Deep Dive)](#25-streaming-protocols-deep-dive)
+- [26. Music Streaming Platform - Code](#26-music-streaming-platform---code)
+
+**[PART 4 - Additional Interview Problems](#part-4---additional-interview-problems)**
+
+- [27. LRU Cache](#27-lru-cache)
+- [28. Rate Limiter](#28-rate-limiter)
+- [29. Snake & Ladder](#29-snake--ladder)
+- [30. Tic-Tac-Toe](#30-tic-tac-toe)
+- [31. Splitwise](#31-splitwise)
+- [32. BookMyShow](#32-bookmyshow)
+- [33. Food Delivery (Zomato-style)](#33-food-delivery-zomato-style)
+- [34. Library Management](#34-library-management)
+- [35. URL Shortener (LLD view)](#35-url-shortener-lld-view)
+- [36. Stock Exchange](#36-stock-exchange)
+- [37. Meeting Platform (Zoom-style)](#37-meeting-platform-zoom-style)
+- [38. Distributed Cache](#38-distributed-cache)
+- [39. Git (Version Control)](#39-git-version-control)
+- [40. Thread-Safe Singleton](#40-thread-safe-singleton)
+- [41. Custom Thread Pool](#41-custom-thread-pool)
+- [42. Blocking Queue](#42-blocking-queue)
+- [43. Producer-Consumer](#43-producer-consumer)
+- [44. Web Crawler](#44-web-crawler)
+- [45. Immutable Class](#45-immutable-class)
+- [46. Custom Read-Write Lock](#46-custom-read-write-lock)
+- [Appendix E - Compile Notes & Common Imports](#appendix-e---compile-notes--common-imports)
+- [Appendix F - The 12-Point Pre-Submission Self-Review (use before presenting any design)](#appendix-f---the-12-point-pre-submission-self-review-use-before-presenting-any-design)
 
 ---
+
 # THE INTERVIEW FRAMEWORK (9 steps - run every problem through these)
 
 The 9 steps interviewers expect, in order. Do not skip Step 1; skipping it is the most common reject.
